@@ -27,3 +27,66 @@ https://trello.com/b/88WLBizE/prog4-tp-puljizzz
 - Lucas Gimenez
 - Guido Ayala
 - Enzo Vernet
+
+## Stack
+
+- Node.js 22 LTS con ESM estricto (`import` / `export`, sin CommonJS).
+- Express 5.
+- PostgreSQL 15.
+- pnpm.
+- Arquitectura hexagonal (dominio, aplicación con puertos y adaptadores, infraestructura).
+
+## Estructura
+
+```text
+src/
+├── domain/                 # Entidades, objetos de valor, reglas puras y errores
+├── application/
+│   ├── use-cases/          # Casos de uso
+│   └── ports/
+│       ├── in/             # Contratos de entrada
+│       └── out/            # Contratos de salida (reloj, repositorios, mapas, pagos…)
+├── infrastructure/
+│   ├── adapters/
+│   │   ├── in/http/        # Adaptador de entrada Express
+│   │   └── out/            # Adaptadores reales y falsos (PostgreSQL, reloj…)
+│   ├── config/             # Validación de variables de entorno
+│   └── logging/            # Logger estructurado
+├── composition-root.js     # Único punto que crea e inyecta adaptadores
+└── main.js                 # Arranque y cierre ordenado del proceso
+```
+
+El dominio no importa Express, el driver de PostgreSQL ni ninguna librería de
+infraestructura. Esa regla se verifica en `tests/architecture/boundaries.test.js`.
+Cada dependencia externa entra por un puerto con un adaptador real y uno falso o
+en memoria. El adaptador se elige con `ADAPTERS_MODE` (`real` o `fake`) y el
+único archivo que lo decide es `src/composition-root.js`.
+
+## Puesta en marcha
+
+Requisitos: Node.js 22 LTS, pnpm y Docker.
+
+```bash
+cp .env.example .env
+pnpm install
+pnpm db:up
+pnpm dev
+```
+
+El servidor queda disponible en `http://localhost:3000` y el chequeo de
+infraestructura en `http://localhost:3000/health`.
+
+Para ejecutar sin base de datos, usar `ADAPTERS_MODE=fake` en `.env`.
+
+## Comandos
+
+```bash
+pnpm dev            # Servidor con recarga automática
+pnpm start          # Servidor en modo normal
+pnpm test           # Tests de arquitectura, integración y configuración
+pnpm lint           # Análisis estático
+pnpm format         # Formateo con Prettier
+pnpm db:up          # Levanta PostgreSQL con Docker Compose
+pnpm db:down        # Detiene PostgreSQL
+```
+
