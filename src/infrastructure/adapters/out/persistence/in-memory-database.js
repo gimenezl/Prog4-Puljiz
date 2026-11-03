@@ -6,11 +6,11 @@
 export class InMemoryDatabase {
   #abierta = true;
 
-  async ping() {
+  async verificarConexion() {
     return this.#abierta;
   }
 
-  async close() {
+  async cerrar() {
     this.#abierta = false;
   }
 }

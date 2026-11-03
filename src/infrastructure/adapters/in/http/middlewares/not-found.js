@@ -1,3 +1,5 @@
+import { obtenerRequestId } from '../../../../context/request-context.js';
+
 /**
  * Respuesta uniforme para recursos inexistentes.
  */
@@ -7,6 +9,6 @@ export function notFoundHandler(req, res) {
       codigo: 'RECURSO_NO_ENCONTRADO',
       mensaje: 'El recurso solicitado no existe.',
     },
-    requestId: req.id,
+    requestId: obtenerRequestId() ?? req.id,
   });
 }

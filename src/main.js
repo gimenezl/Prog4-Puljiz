@@ -1,61 +1,64 @@
+import pino from 'pino';
+
 import { composeApplication } from './composition-root.js';
 import { loadEnv } from './infrastructure/config/env.js';
+import { startHttpServer } from './infrastructure/lifecycle/http-server.js';
+import { createShutdownHandler } from './infrastructure/lifecycle/shutdown.js';
 
-const entorno = loadEnv();
-const { app, logger, shutdown } = composeApplication(entorno);
+const loggerArranque = pino({ base: { servicio: 'prog4-puljiz' } });
 
-const servidor = app.listen(entorno.PORT, entorno.HOST, () => {
-  logger.info(
-    { puerto: entorno.PORT, host: entorno.HOST, adaptadores: entorno.ADAPTERS_MODE },
-    'Servidor HTTP iniciado',
-  );
-});
+async function iniciar() {
+  let composicion;
 
-let cerrando = false;
+  try {
+    const entorno = loadEnv();
+    composicion = composeApplication(entorno);
 
-async function cerrar(senal) {
-  if (cerrando) return;
-  cerrando = true;
+    const servidor = await startHttpServer({
+      app: composicion.app,
+      host: entorno.HOST,
+      port: entorno.PORT,
+      logger: composicion.logger,
+    });
 
-  logger.info({ senal }, 'Cierre ordenado iniciado');
+    const shutdown = createShutdownHandler({
+      servidor,
+      cerrarRecursos: composicion.shutdown,
+      logger: composicion.logger,
+      timeoutMs: entorno.SHUTDOWN_TIMEOUT_MS,
+    });
 
-  const cierreForzado = setTimeout(() => {
-    logger.error('No se pudo cerrar el servidor a tiempo');
+    for (const senal of ['SIGTERM', 'SIGINT']) {
+      process.on(senal, () => {
+        void shutdown(senal);
+      });
+    }
+
+    process.on('unhandledRejection', (motivo) => {
+      composicion.logger.fatal({ err: motivo }, 'Promesa rechazada sin control');
+      process.exitCode = 1;
+      void shutdown('unhandledRejection');
+    });
+
+    process.on('uncaughtException', (error) => {
+      composicion.logger.fatal({ err: error }, 'Excepción no controlada');
+      process.exitCode = 1;
+      void shutdown('uncaughtException');
+    });
+  } catch (error) {
+    const logger = composicion?.logger ?? loggerArranque;
+    logger.fatal({ err: error }, 'No se pudo iniciar la aplicación');
+
+    if (composicion) {
+      try {
+        await composicion.shutdown();
+      } catch (errorCierre) {
+        logger.error({ err: errorCierre }, 'Error al liberar recursos tras un fallo de arranque');
+      }
+    }
+
     process.exit(1);
-  }, 10_000);
-  cierreForzado.unref();
-
-  servidor.close(async (errorHttp) => {
-    try {
-      await shutdown();
-    } catch (errorCierre) {
-      logger.error({ err: errorCierre }, 'Error al cerrar los adaptadores');
-      process.exitCode = 1;
-    }
-
-    clearTimeout(cierreForzado);
-
-    if (errorHttp) {
-      logger.error({ err: errorHttp }, 'Error al cerrar el servidor HTTP');
-      process.exitCode = 1;
-    }
-
-    process.exit();
-  });
+  }
 }
 
-for (const senal of ['SIGINT', 'SIGTERM']) {
-  process.on(senal, () => {
-    void cerrar(senal);
-  });
-}
-
-process.on('unhandledRejection', (motivo) => {
-  logger.fatal({ err: motivo }, 'Promesa rechazada sin control');
-  process.exit(1);
-});
-
-process.on('uncaughtException', (error) => {
-  logger.fatal({ err: error }, 'Excepción no controlada');
-  process.exit(1);
-});
+void iniciar();

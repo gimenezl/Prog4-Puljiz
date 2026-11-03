@@ -12,3 +12,9 @@ Convenciones para las migraciones:
 - Las restricciones únicas e índices parciales del modelo de dominio se
   declaran en la migración correspondiente.
 - Las credenciales y cadenas de conexión viven en `.env`, nunca en el SQL.
+
+Migraciones actuales:
+
+- `001_usuarios.sql`: cuentas y unicidad del email sin distinguir mayúsculas.
+- `002_viajes.sql`: viajes, perfiles de chofer y claves de idempotencia. Incluye
+  el índice único parcial que impide dos viajes activos por chofer.

@@ -8,7 +8,9 @@ Estructura:
 - `adapters/in/http/`: adaptador de entrada HTTP (Express).
 - `adapters/out/`: adaptadores de salida (persistencia, reloj, mapas, pagos,
   notificaciones, almacenamiento).
-- `config/`: carga y validación de variables de entorno.
+- `config/`: carga y validación de variables de entorno con Zod.
+- `health/`: composición del readiness con timeout por dependencia.
+- `lifecycle/`: arranque del servidor HTTP y cierre ordenado e idempotente.
 - `logging/`: logger estructurado.
 
 Reglas:
@@ -19,3 +21,4 @@ Reglas:
 - Ningún adaptador decide reglas de negocio.
 - `src/composition-root.js` es el único archivo que crea adaptadores concretos
   y los inyecta.
+- `main.js` no contiene lógica de infraestructura: delega en `lifecycle/`.

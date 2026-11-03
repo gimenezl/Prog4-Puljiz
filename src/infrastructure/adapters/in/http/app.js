@@ -1,13 +1,20 @@
-import { randomUUID } from 'node:crypto';
 import cors from 'cors';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 
+import { normalizarRequestId } from '../../../context/request-id.js';
 import { createErrorHandler } from './middlewares/error-handler.js';
+import { crearAutenticacionRequerida } from './middlewares/authentication.js';
+import { crearLimitadorLogin } from './middlewares/login-rate-limit.js';
 import { notFoundHandler } from './middlewares/not-found.js';
+import { createRequestContextMiddleware } from './middlewares/request-context.js';
+import { createAuthRouter } from './routes/auth.routes.js';
+import { createChoferesRouter } from './routes/choferes.routes.js';
 import { createHealthRouter } from './routes/health.routes.js';
+import { createUsuariosRouter } from './routes/usuarios.routes.js';
+import { createViajesRouter } from './routes/viajes.routes.js';
 
 /**
  * Adaptador de entrada HTTP. Recibe todas sus dependencias ya construidas.
@@ -15,7 +22,10 @@ import { createHealthRouter } from './routes/health.routes.js';
  */
 export function createHttpApp({
   logger,
-  healthCheck,
+  readinessCheck,
+  auth,
+  viajes,
+  choferes,
   corsOrigin = '*',
   bodyLimit = '100kb',
   rateLimit: opcionesRateLimit = {},
@@ -30,15 +40,12 @@ export function createHttpApp({
   app.use(
     pinoHttp({
       logger,
-      genReqId: (req) => {
-        const solicitado = req.headers['x-request-id'];
-        return typeof solicitado === 'string' && solicitado.length <= 128
-          ? solicitado
-          : randomUUID();
-      },
-      autoLogging: { ignore: (req) => req.url === '/health' },
+      genReqId: (req) =>
+        normalizarRequestId(req.headers['x-request-id'] ?? req.headers['x-correlation-id']),
+      autoLogging: { ignore: (req) => req.url === '/health' || req.url === '/ready' },
     }),
   );
+  app.use(createRequestContextMiddleware({ logger }));
 
   app.use(express.json({ limit: bodyLimit }));
   app.use(express.urlencoded({ extended: false, limit: bodyLimit }));
@@ -61,7 +68,54 @@ export function createHttpApp({
     }),
   );
 
-  app.use('/health', createHealthRouter({ healthCheck }));
+  app.use(createHealthRouter({ readinessCheck }));
+
+  if (auth) {
+    const autenticacionRequerida = crearAutenticacionRequerida({
+      servicioDeTokens: auth.servicioDeTokens,
+    });
+    const limitadorLogin = crearLimitadorLogin(auth.loginRateLimit);
+
+    app.use(
+      '/auth',
+      createAuthRouter({
+        registrarUsuario: auth.registrarUsuario,
+        iniciarSesion: auth.iniciarSesion,
+        obtenerPerfilUsuario: auth.obtenerPerfilUsuario,
+        autenticacionRequerida,
+        limitadorLogin,
+      }),
+    );
+
+    app.use(
+      '/usuarios',
+      createUsuariosRouter({
+        obtenerPerfilUsuario: auth.obtenerPerfilUsuario,
+        actualizarPerfilUsuario: auth.actualizarPerfilUsuario,
+        autenticacionRequerida,
+      }),
+    );
+
+    if (viajes) {
+      app.use(
+        '/viajes',
+        createViajesRouter({
+          ...viajes,
+          autenticacionRequerida,
+        }),
+      );
+    }
+
+    if (choferes) {
+      app.use(
+        '/choferes',
+        createChoferesRouter({
+          ...choferes,
+          autenticacionRequerida,
+        }),
+      );
+    }
+  }
 
   app.use(notFoundHandler);
   app.use(createErrorHandler({ logger }));

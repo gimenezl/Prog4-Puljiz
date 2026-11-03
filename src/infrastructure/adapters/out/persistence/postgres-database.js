@@ -33,7 +33,7 @@ export class PostgresDatabase {
     });
   }
 
-  async ping() {
+  async verificarConexion() {
     const { rows } = await this.#pool.query('SELECT 1::int AS ok');
     return rows[0]?.ok === 1;
   }
@@ -42,7 +42,49 @@ export class PostgresDatabase {
     return this.#pool.query(texto, parametros);
   }
 
-  async close() {
+  /**
+   * Ejecuta una operación dentro de una transacción. La operación recibe un
+   * ejecutor con la misma interfaz que este adaptador (`query`) para que los
+   * repositorios usen la conexión reservada.
+   *
+   * Los errores de serialización y los interbloqueos se reintentan una
+   * cantidad limitada de veces: la transacción se revierte completa antes de
+   * volver a intentar.
+   */
+  async transaccion(operacion, { reintentos = 2 } = {}) {
+    for (let intento = 0; ; intento += 1) {
+      const cliente = await this.#pool.connect();
+
+      try {
+        await cliente.query('BEGIN');
+        const resultado = await operacion(cliente);
+        await cliente.query('COMMIT');
+
+        return resultado;
+      } catch (error) {
+        try {
+          await cliente.query('ROLLBACK');
+        } catch {
+          // La conexión ya puede estar inutilizable; se libera igual.
+        }
+
+        if (intento < reintentos && esErrorReintentable(error)) {
+          continue;
+        }
+
+        throw error;
+      } finally {
+        cliente.release();
+      }
+    }
+  }
+
+  async cerrar() {
     await this.#pool.end();
   }
+}
+
+function esErrorReintentable(error) {
+  // 40001: serialization_failure. 40P01: deadlock_detected.
+  return error?.code === '40001' || error?.code === '40P01';
 }

@@ -21,11 +21,17 @@ test('el composition root puede arrancar con adaptadores falsos', async (t) => {
     await shutdown();
   });
 
-  const respuesta = await fetch(`${urlBase}/health`);
+  const health = await fetch(`${urlBase}/health`);
+  assert.equal(health.status, 200);
 
-  assert.equal(respuesta.status, 200);
-  const cuerpo = await respuesta.json();
-  assert.equal(cuerpo.estado, 'ok');
+  const ready = await fetch(`${urlBase}/ready`);
+  assert.equal(ready.status, 200);
+  const cuerpo = await ready.json();
+  assert.equal(cuerpo.estado, 'listo');
   assert.equal(cuerpo.chequeos.baseDeDatos.ok, true);
+  assert.equal(cuerpo.chequeos.usuarios.ok, true);
+  assert.equal(cuerpo.chequeos.choferes.ok, true);
+  assert.equal(cuerpo.chequeos.viajes.ok, true);
+  assert.equal(cuerpo.chequeos.idempotencia.ok, true);
   assert.equal(cuerpo.chequeos.reloj.ok, true);
 });

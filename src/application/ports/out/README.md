@@ -13,6 +13,8 @@ Reglas:
 4. Los contratos se documentan con JSDoc y se validan en los tests de integración
    y de arquitectura.
 
-Puertos previstos: `Reloj`, `UnidadDeTrabajo`, repositorios por agregado,
-`EstimadorDeRecorrido`, `Zonas`, `BuscadorDeChoferesCercanos`,
-`SimuladorDeCobro`, `Notificador` y `AlmacenamientoDeArchivos`.
+Puertos previstos: `BaseDeDatos`, `Reloj`, `GeneradorDeIds`, `RepositorioUsuarios`,
+`RepositorioChoferes`, `RepositorioViajes`, `RepositorioClavesIdempotencia`,
+`ServicioDeHash`, `ServicioDeTokens`, `UnidadDeTrabajo`, repositorios por agregado,
+`EstimadorDeRecorrido`, `Zonas`, `BuscadorDeChoferesCercanos`, `SimuladorDeCobro`,
+`Notificador` y `AlmacenamientoDeArchivos`.

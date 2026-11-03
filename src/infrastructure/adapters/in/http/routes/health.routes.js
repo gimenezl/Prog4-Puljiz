@@ -1,26 +1,37 @@
 import { Router } from 'express';
 
+import { asyncHandler } from '../async-handler.js';
+
 /**
- * Endpoint de infraestructura para verificar que el proceso y sus
- * dependencias externas estén disponibles.
+ * Endpoints de infraestructura:
+ * - /health: liveness. Solo confirma que el proceso responde.
+ * - /ready: readiness. Comprueba las dependencias externas necesarias.
  */
-export function createHealthRouter({ healthCheck }) {
+export function createHealthRouter({ readinessCheck }) {
   const router = Router();
 
-  router.get('/', async (req, res, next) => {
-    try {
-      const chequeos = await healthCheck();
-      const saludable = Object.values(chequeos).every((chequeo) => chequeo?.ok === true);
+  router.get('/health', (_req, res) => {
+    res.status(200).json({
+      estado: 'ok',
+      tipo: 'liveness',
+      fecha: new Date().toISOString(),
+    });
+  });
 
-      res.status(saludable ? 200 : 503).json({
-        estado: saludable ? 'ok' : 'degradado',
+  router.get(
+    '/ready',
+    asyncHandler(async (_req, res) => {
+      const chequeos = await readinessCheck();
+      const listo = Object.values(chequeos).every((chequeo) => chequeo?.ok === true);
+
+      res.status(listo ? 200 : 503).json({
+        estado: listo ? 'listo' : 'no_listo',
+        tipo: 'readiness',
         chequeos,
         fecha: new Date().toISOString(),
       });
-    } catch (error) {
-      next(error);
-    }
-  });
+    }),
+  );
 
   return router;
 }
