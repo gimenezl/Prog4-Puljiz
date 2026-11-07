@@ -1,11 +1,33 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { loadEnv } from '../src/infrastructure/config/env.js';
 import { PostgresDatabase } from '../src/infrastructure/adapters/out/persistence/postgres-database.js';
 import { createLogger } from '../src/infrastructure/logging/logger.js';
 
-const DIRECTORIO_MIGRACIONES = path.resolve(import.meta.dirname, '../db/migrations');
+export const DIRECTORIO_MIGRACIONES = path.resolve(import.meta.dirname, '../db/migrations');
+
+/**
+ * Aplica en orden alfabético todas las migraciones SQL sobre la base indicada.
+ * Las migraciones actuales son idempotentes (`IF NOT EXISTS`), por lo que se
+ * pueden volver a ejecutar sin romper una base existente.
+ *
+ * La función se exporta para que los tests de integración puedan preparar una
+ * base de pruebas sin depender del proceso CLI.
+ */
+export async function aplicarMigraciones(
+  baseDeDatos,
+  { logger, directorio = DIRECTORIO_MIGRACIONES } = {},
+) {
+  const archivos = (await readdir(directorio)).filter((archivo) => archivo.endsWith('.sql')).sort();
+
+  for (const archivo of archivos) {
+    const sql = await readFile(path.join(directorio, archivo), 'utf8');
+    await baseDeDatos.query(sql);
+    logger?.info({ migracion: archivo }, 'Migración aplicada');
+  }
+}
 
 async function migrar() {
   const entorno = loadEnv();
@@ -25,21 +47,19 @@ async function migrar() {
   });
 
   try {
-    const archivos = (await readdir(DIRECTORIO_MIGRACIONES))
-      .filter((archivo) => archivo.endsWith('.sql'))
-      .sort();
-
-    for (const archivo of archivos) {
-      const sql = await readFile(path.join(DIRECTORIO_MIGRACIONES, archivo), 'utf8');
-      await baseDeDatos.query(sql);
-      logger.info({ migracion: archivo }, 'Migración aplicada');
-    }
+    await aplicarMigraciones(baseDeDatos, { logger });
   } finally {
     await baseDeDatos.cerrar();
   }
 }
 
-migrar().catch((error) => {
-  process.stderr.write(`${error.message}\n`);
-  process.exitCode = 1;
-});
+const ejecucionDirecta =
+  typeof process.argv[1] === 'string' &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+
+if (ejecucionDirecta) {
+  migrar().catch((error) => {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  });
+}

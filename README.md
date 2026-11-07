@@ -69,6 +69,13 @@ escucha `SIGTERM` y `SIGINT`, deja de aceptar conexiones, espera las solicitudes
 en curso y cierra la pool de PostgreSQL. Si el cierre supera
 `SHUTDOWN_TIMEOUT_MS`, el proceso termina con código 1.
 
+## Documentación
+
+- `docs/implementacion-completa.md`: resumen consolidado de los bloques 1 a 6.
+- `docs/implementacion-bloque-5.md`: viajes, concurrencia e idempotencia.
+- `docs/implementacion-bloque-6.md`: PostgreSQL real para tests.
+- `docs/modelo.md`: modelo de dominio y diagramas.
+
 ## Puesta en marcha
 
 Requisitos: Node.js 22 LTS, pnpm y Docker.
@@ -177,18 +184,57 @@ Endpoints:
 - `GET /ready` comprueba también las tablas de choferes, viajes y claves de
   idempotencia.
 
+## Pruebas de integración con PostgreSQL real
+
+Además de los tests con adaptadores en memoria, el proyecto incluye una suite
+que se ejecuta contra una instancia real y descartable de PostgreSQL. Esa suite
+valida las migraciones, las restricciones SQL, los bloqueos `SELECT ... FOR
+UPDATE` y la concurrencia real de aceptar, cancelar y crear viajes.
+
+```bash
+pnpm test:integration:db
+```
+
+El comando:
+
+1. Levanta `compose.test.yaml` (`prog4-puljiz-db-test`) en el puerto `5433`.
+2. Espera a que PostgreSQL acepte conexiones.
+3. Recrea el esquema `public` y aplica `db/migrations`.
+4. Ejecuta `tests/integration/postgres/`.
+5. Baja el contenedor y descarta los datos, salvo que se use `KEEP_TEST_DB=1`.
+
+La base de test usa `tmpfs`, no comparte volumen con la base de desarrollo y se
+publica solo en `127.0.0.1`. El puerto se puede cambiar con
+`POSTGRES_TEST_PORT`. Si `TEST_DATABASE_URL` está definida, el runner usa esa
+base externa y no levanta ni baja el contenedor.
+
+Los tests de PostgreSQL se saltean automáticamente en `pnpm test` cuando
+`TEST_DATABASE_URL` no está definida. Para ejecutarlos manualmente:
+
+```bash
+pnpm test:db:up
+TEST_DATABASE_URL=postgresql://admin:password@127.0.0.1:5433/proy_db_test \
+  pnpm test:integration
+pnpm test:db:down
+```
+
+`test:db:up` deja el esquema migrado y listo para usar.
+
 ## Comandos
 
 ```bash
-pnpm dev             # Servidor con recarga automática
-pnpm start           # Servidor en modo normal
-pnpm test            # Tests de arquitectura, integración y configuración
-pnpm test:unit       # Solo tests unitarios (sin Express ni base de datos)
-pnpm test:integration # Tests de integración y límites de arquitectura
-pnpm lint            # Análisis estático
-pnpm format          # Formateo con Prettier
-pnpm db:up           # Levanta PostgreSQL con Docker Compose
-pnpm db:migrate      # Aplica las migraciones SQL
-pnpm db:down         # Detiene PostgreSQL
+pnpm dev                 # Servidor con recarga automática
+pnpm start               # Servidor en modo normal
+pnpm test                # Tests de arquitectura, integración y configuración
+pnpm test:unit           # Solo tests unitarios (sin Express ni base de datos)
+pnpm test:integration    # Tests de integración y límites de arquitectura
+pnpm test:integration:db # PostgreSQL real efímero: levanta, migra, prueba y baja
+pnpm test:db:up          # Prepara la base de test y deja el contenedor
+pnpm test:db:down        # Baja y borra la base de test
+pnpm lint                # Análisis estático
+pnpm format              # Formateo con Prettier
+pnpm db:up               # Levanta PostgreSQL con Docker Compose
+pnpm db:migrate          # Aplica las migraciones SQL
+pnpm db:down             # Detiene PostgreSQL
 ```
 
