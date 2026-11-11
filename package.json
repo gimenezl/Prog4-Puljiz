@@ -1,0 +1,56 @@
+{
+  "name": "prog4-puljiz",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend de la plataforma de viajes con precio dinámico — Programación IV (UTN)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "dev": "node --watch src/main.js",
+    "start": "node src/main.js",
+    "test": "node --test --test-concurrency=1 tests/",
+    "test:unit": "node --test --test-concurrency=1 tests/unit/",
+    "test:integration": "node --test --test-concurrency=1 tests/integration/ tests/architecture/",
+    "test:integration:db": "node scripts/test-database.js run",
+    "test:db:up": "node scripts/test-database.js up",
+    "test:db:down": "node scripts/test-database.js down",
+    "test:watch": "node --test --watch tests/",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:up": "docker compose up -d --wait db",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f db",
+    "db:prepare": "pnpm db:up && pnpm db:migrate",
+    "db:migrate": "node scripts/migrate.js",
+    "db:seed": "node scripts/seed.js",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f app"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.2",
+    "helmet": "^8.3.0",
+    "jose": "^6.2.15",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "es-module-lexer": "^3.0.4",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10"
+  }
+}
