@@ -72,26 +72,65 @@ en curso y cierra la pool de PostgreSQL. Si el cierre supera
 ## Documentación
 
 - `docs/implementacion-completa.md`: resumen consolidado de los bloques 1 a 6.
+- `docs/implementacion-bloque-1-y-3.md`: Docker, arranque y ciclo de vida.
 - `docs/implementacion-bloque-5.md`: viajes, concurrencia e idempotencia.
 - `docs/implementacion-bloque-6.md`: PostgreSQL real para tests.
 - `docs/modelo.md`: modelo de dominio y diagramas.
 
 ## Puesta en marcha
 
-Requisitos: Node.js 22 LTS, pnpm y Docker.
+Requisitos: Docker y Docker Compose. Para ejecutar sin contenedores, además
+Node.js 22 LTS y pnpm.
+
+### Con Docker (recomendado)
+
+```bash
+cp .env.example .env   # opcional: Compose trae valores de desarrollo
+docker compose up --build
+```
+
+Ese comando construye la imagen de la aplicación, levanta PostgreSQL, espera el
+healthcheck de la base, aplica las migraciones y arranca Express en
+`http://localhost:3000`. El contenedor de la aplicación vuelve a aplicar las
+migraciones en cada arranque; son idempotentes.
+
+```bash
+docker compose ps                 # estado y healthchecks
+docker compose exec app pnpm db:seed
+curl http://localhost:3000/health
+curl http://localhost:3000/ready
+docker compose stop app           # envía SIGTERM y ejecuta el cierre ordenado
+docker compose down               # baja todo; con -v borra también el volumen
+```
+
+Los datos de prueba quedan disponibles con estas cuentas:
+
+| Rol | Email | Contraseña |
+|---|---|---|
+| `ADMINISTRADOR` | `admin@prog4.test` | `Admin1234!` |
+| `OPERADOR_SOPORTE` | `soporte@prog4.test` | `Soporte1234!` |
+| `PASAJERO` | `pasajero@prog4.test` | `Pasajero1234!` |
+| `CHOFER` | `chofer1@prog4.test` | `Chofer1234!` |
+| `CHOFER` | `chofer2@prog4.test` | `Chofer1234!` |
+
+El seed es idempotente: si una cuenta ya existe con el mismo rol, no la
+duplica ni pisa sus datos.
+
+### Sin Docker
 
 ```bash
 cp .env.example .env
 pnpm install
-pnpm db:up
-pnpm db:migrate
+pnpm db:prepare
+pnpm db:seed
 pnpm dev
 ```
 
 El servidor queda disponible en `http://localhost:3000`.
 
 - `GET /health`: liveness. No consulta dependencias externas.
-- `GET /ready`: readiness. Comprueba PostgreSQL y el reloj con timeout.
+- `GET /ready`: readiness. Comprueba PostgreSQL, las tablas creadas por las
+  migraciones y el reloj, con timeout por dependencia.
 
 Para ejecutar sin base de datos, usar `ADAPTERS_MODE=fake` en `.env`.
 
@@ -233,8 +272,14 @@ pnpm test:db:up          # Prepara la base de test y deja el contenedor
 pnpm test:db:down        # Baja y borra la base de test
 pnpm lint                # Análisis estático
 pnpm format              # Formateo con Prettier
-pnpm db:up               # Levanta PostgreSQL con Docker Compose
+pnpm format:check        # Verifica el formato
+pnpm db:prepare          # Levanta PostgreSQL y aplica migraciones
+pnpm db:seed             # Carga usuarios y choferes de prueba
+pnpm db:up               # Levanta PostgreSQL y espera su healthcheck
 pnpm db:migrate          # Aplica las migraciones SQL
-pnpm db:down             # Detiene PostgreSQL
+pnpm db:down             # Detiene los contenedores
+pnpm docker:up           # Construye y levanta app + PostgreSQL
+pnpm docker:down         # Baja los contenedores
+pnpm docker:logs         # Sigue los logs de la aplicación
 ```
 

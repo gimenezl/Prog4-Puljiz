@@ -1,11 +1,12 @@
 # Implementación completa del backend — Bloques 1 a 6
 
 Este documento consolida todo lo implementado en el backend de la plataforma de
-viajes hasta el **6 de noviembre de 2026**, en la rama
+viajes hasta el **11 de noviembre de 2026**, en la rama
 `preparacion-de-entorno`.
 
 El detalle específico de cada etapa también está disponible en:
 
+- `docs/implementacion-bloque-1-y-3.md`: Docker, arranque y ciclo de vida.
 - `docs/implementacion-bloque-5.md`: viajes, concurrencia e idempotencia.
 - `docs/implementacion-bloque-6.md`: PostgreSQL real para tests.
 - `docs/modelo.md`: modelo de dominio y diagramas.
@@ -648,9 +649,14 @@ pnpm test:db:down        # Baja y borra la base de test
 pnpm lint                # Análisis estático
 pnpm format              # Formateo con Prettier
 pnpm format:check        # Verifica el formato
-pnpm db:up               # Levanta PostgreSQL de desarrollo
+pnpm db:prepare          # Levanta PostgreSQL y aplica migraciones
+pnpm db:seed             # Carga usuarios y choferes de prueba
+pnpm db:up               # Levanta PostgreSQL y espera su healthcheck
 pnpm db:migrate          # Aplica migraciones
-pnpm db:down             # Detiene PostgreSQL de desarrollo
+pnpm db:down             # Detiene los contenedores
+pnpm docker:up           # Construye y levanta app + PostgreSQL
+pnpm docker:down         # Baja los contenedores
+pnpm docker:logs         # Sigue los logs de la aplicación
 ```
 
 ---
@@ -696,7 +702,10 @@ pnpm db:down             # Detiene PostgreSQL de desarrollo
 - `db/migrations/001_usuarios.sql`
 - `db/migrations/002_viajes.sql`
 - `scripts/migrate.js`
+- `scripts/seed.js`
 - `scripts/test-database.js`
+- `Dockerfile`
+- `.dockerignore`
 - `compose.yaml`
 - `compose.test.yaml`
 
@@ -713,6 +722,7 @@ pnpm db:down             # Detiene PostgreSQL de desarrollo
 - `README.md`
 - `db/README.md`
 - `docs/modelo.md`
+- `docs/implementacion-bloque-1-y-3.md`
 - `docs/implementacion-bloque-5.md`
 - `docs/implementacion-bloque-6.md`
 - `docs/implementacion-completa.md`

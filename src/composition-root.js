@@ -217,6 +217,7 @@ export function composeApplication(entorno) {
     logger,
     baseDeDatos,
     reloj,
+    generadorIds,
     readinessCheck,
     repositorioUsuarios,
     repositorioChoferes,

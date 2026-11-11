@@ -23,10 +23,15 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "db:up": "docker compose up -d db",
+    "db:up": "docker compose up -d --wait db",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f db",
-    "db:migrate": "node scripts/migrate.js"
+    "db:prepare": "pnpm db:up && pnpm db:migrate",
+    "db:migrate": "node scripts/migrate.js",
+    "db:seed": "node scripts/seed.js",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f app"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
