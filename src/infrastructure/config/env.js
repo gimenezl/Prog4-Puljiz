@@ -36,6 +36,10 @@ const esquemaEntorno = z
     PASSWORD_HASH_COST: z.coerce.number().int().min(4).max(15).default(12),
     LOGIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(900000),
     LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
+    REGISTRO_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(60000),
+    REGISTRO_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
+    VIAJES_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(60000),
+    VIAJES_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(30),
 
     // Viajes: tarifa provisional en centavos. El cliente nunca informa importes.
     TARIFA_BASE_CENTAVOS: z.coerce.number().int().min(0).default(100000),

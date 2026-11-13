@@ -1,6 +1,5 @@
 import cors from 'cors';
 import express from 'express';
-import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 
@@ -9,6 +8,7 @@ import { createErrorHandler } from './middlewares/error-handler.js';
 import { crearAutenticacionRequerida } from './middlewares/authentication.js';
 import { crearLimitadorLogin } from './middlewares/login-rate-limit.js';
 import { notFoundHandler } from './middlewares/not-found.js';
+import { crearLimitador } from './middlewares/rate-limit.js';
 import { createRequestContextMiddleware } from './middlewares/request-context.js';
 import { createAuthRouter } from './routes/auth.routes.js';
 import { createChoferesRouter } from './routes/choferes.routes.js';
@@ -51,20 +51,9 @@ export function createHttpApp({
   app.use(express.urlencoded({ extended: false, limit: bodyLimit }));
 
   app.use(
-    rateLimit({
+    crearLimitador({
       windowMs: opcionesRateLimit.windowMs ?? 60_000,
       limit: opcionesRateLimit.limit ?? 300,
-      standardHeaders: 'draft-7',
-      legacyHeaders: false,
-      handler: (req, res) => {
-        res.status(429).json({
-          error: {
-            codigo: 'DEMASIADAS_SOLICITUDES',
-            mensaje: 'Se superó el límite de solicitudes. Intente más tarde.',
-          },
-          requestId: req.id,
-        });
-      },
     }),
   );
 
@@ -75,6 +64,16 @@ export function createHttpApp({
       servicioDeTokens: auth.servicioDeTokens,
     });
     const limitadorLogin = crearLimitadorLogin(auth.loginRateLimit);
+    const limitadorRegistro = crearLimitador({
+      windowMs: opcionesRateLimit.registro?.windowMs ?? 60_000,
+      limit: opcionesRateLimit.registro?.limit ?? 10,
+      mensaje: 'Se superó el límite de registros. Intente más tarde.',
+    });
+    const limitadorViajes = crearLimitador({
+      windowMs: opcionesRateLimit.viajes?.windowMs ?? 60_000,
+      limit: opcionesRateLimit.viajes?.limit ?? 30,
+      mensaje: 'Se superó el límite de operaciones sobre viajes. Intente más tarde.',
+    });
 
     app.use(
       '/auth',
@@ -84,6 +83,7 @@ export function createHttpApp({
         obtenerPerfilUsuario: auth.obtenerPerfilUsuario,
         autenticacionRequerida,
         limitadorLogin,
+        limitadorRegistro,
       }),
     );
 
@@ -102,6 +102,7 @@ export function createHttpApp({
         createViajesRouter({
           ...viajes,
           autenticacionRequerida,
+          limitadorViajes,
         }),
       );
     }

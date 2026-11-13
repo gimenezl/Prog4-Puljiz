@@ -125,7 +125,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
 
     assert.deepEqual(
       tablas.rows.map((fila) => fila.table_name),
-      ['choferes', 'claves_idempotencia', 'usuarios', 'viajes'],
+      ['choferes', 'claves_idempotencia', 'cobros_simulados', 'usuarios', 'viajes'],
     );
 
     const indices = await kit.baseDeDatos.query(
@@ -137,6 +137,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       'usuarios_email_lower_idx',
       'viajes_chofer_activo_idx',
       'claves_idempotencia_vence_en_idx',
+      'cobros_simulados_estado_idx',
     ]) {
       assert.equal(nombres.has(indice), true, `falta el índice ${indice}`);
     }
@@ -438,6 +439,170 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     assert.notEqual(nuevo.viaje.id, viajeId);
   });
 
+  test('finalizar y cobrar persiste viaje, cobro, chofer e idempotencia en una sola transacción', async () => {
+    const { viaje, chofer, pasajero } = await kit.crearViajeAsignado();
+    const claveIdempotencia = 'finalizar-postgres';
+
+    const resultado = await kit.finalizarViaje({
+      viajeId: viaje.id,
+      choferId: chofer.usuario.id,
+      claveIdempotencia,
+    });
+
+    assert.equal(resultado.reutilizada, false);
+    assert.equal(resultado.viaje.estado, 'FINALIZADO');
+    assert.equal(resultado.cobro.estado, 'COBRADO');
+    assert.equal(resultado.cobro.montoCentavos, viaje.precioFijadoCentavos);
+    assert.equal(resultado.cobro.referencia, `SIM-${viaje.id}`);
+
+    const filaViaje = await kit.baseDeDatos.query(
+      'SELECT estado, cerrado_en FROM viajes WHERE id = $1',
+      [viaje.id],
+    );
+    assert.equal(filaViaje.rows[0].estado, 'FINALIZADO');
+    assert.notEqual(filaViaje.rows[0].cerrado_en, null);
+
+    const filaCobro = await kit.baseDeDatos.query(
+      `SELECT viaje_id, monto_centavos, estado, referencia
+         FROM cobros_simulados
+        WHERE viaje_id = $1`,
+      [viaje.id],
+    );
+    assert.equal(filaCobro.rowCount, 1);
+    assert.equal(filaCobro.rows[0].monto_centavos, viaje.precioFijadoCentavos);
+    assert.equal(filaCobro.rows[0].estado, 'COBRADO');
+    assert.equal(filaCobro.rows[0].referencia, `SIM-${viaje.id}`);
+
+    const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuario.id);
+    assert.equal(perfil.viajeActivoId, null);
+    assert.equal(perfil.estado, 'DISPONIBLE');
+
+    const clave = await kit.repositorioClavesIdempotencia.buscar(
+      `viaje:finalizar:${chofer.usuario.id}`,
+      claveIdempotencia,
+    );
+    assert.equal(clave.respuesta.cobro.id, resultado.cobro.id);
+
+    const cobroConsultado = await kit.obtenerCobro({
+      viajeId: viaje.id,
+      solicitante: { usuarioId: pasajero.id, rol: ROLES.PASAJERO },
+    });
+    assert.equal(cobroConsultado.id, resultado.cobro.id);
+
+    const reintento = await kit.finalizarViaje({
+      viajeId: viaje.id,
+      choferId: chofer.usuario.id,
+      claveIdempotencia,
+    });
+    assert.equal(reintento.reutilizada, true);
+    assert.equal(reintento.cobro.id, resultado.cobro.id);
+
+    await assert.rejects(
+      () =>
+        kit.baseDeDatos.query(
+          `INSERT INTO cobros_simulados (
+             id, viaje_id, monto_centavos, estado, creado_en
+           ) VALUES ($1, $2, $3, 'PENDIENTE', NOW())`,
+          [randomUUID(), viaje.id, viaje.precioFijadoCentavos],
+        ),
+      (error) => error.code === '23505',
+    );
+  });
+
+  test('8 finalizaciones concurrentes con la misma clave generan un solo cobro', async () => {
+    const { viaje, chofer } = await kit.crearViajeAsignado();
+    const claveIdempotencia = 'finalizar-concurrente';
+
+    const resultados = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        kit.finalizarViaje({
+          viajeId: viaje.id,
+          choferId: chofer.usuario.id,
+          claveIdempotencia,
+        }),
+      ),
+    );
+
+    assert.equal(resultados.filter((resultado) => resultado.reutilizada === false).length, 1);
+    assert.equal(new Set(resultados.map((resultado) => resultado.cobro.id)).size, 1);
+
+    const cobros = await kit.baseDeDatos.query(
+      'SELECT COUNT(*)::int AS total FROM cobros_simulados WHERE viaje_id = $1',
+      [viaje.id],
+    );
+    assert.equal(cobros.rows[0].total, 1);
+
+    const claves = await kit.baseDeDatos.query(
+      `SELECT COUNT(*)::int AS total
+         FROM claves_idempotencia
+        WHERE alcance = $1 AND clave = $2`,
+      [`viaje:finalizar:${chofer.usuario.id}`, claveIdempotencia],
+    );
+    assert.equal(claves.rows[0].total, 1);
+  });
+
+  test('finalizaciones concurrentes con claves distintas generan un solo cobro', async () => {
+    const { viaje, chofer } = await kit.crearViajeAsignado();
+
+    const resultados = await Promise.allSettled(
+      Array.from({ length: 6 }, (_, indice) =>
+        kit.finalizarViaje({
+          viajeId: viaje.id,
+          choferId: chofer.usuario.id,
+          claveIdempotencia: `carrera-${indice}`,
+        }),
+      ),
+    );
+
+    const exitosos = resultados.filter((resultado) => resultado.status === 'fulfilled');
+    const rechazados = resultados.filter((resultado) => resultado.status === 'rejected');
+
+    assert.equal(exitosos.length, 1);
+    assert.equal(rechazados.length, 5);
+
+    for (const rechazo of rechazados) {
+      assert.equal(rechazo.reason.codigo, 'TRANSICION_INVALIDA');
+    }
+
+    const cobros = await kit.baseDeDatos.query(
+      'SELECT COUNT(*)::int AS total FROM cobros_simulados WHERE viaje_id = $1',
+      [viaje.id],
+    );
+    assert.equal(cobros.rows[0].total, 1);
+  });
+
+  test('una clave reutilizada con otro viaje no cobra el segundo viaje', async () => {
+    const primero = await kit.crearViajeAsignado();
+    const claveIdempotencia = 'clave-entre-viajes';
+
+    await kit.finalizarViaje({
+      viajeId: primero.viaje.id,
+      choferId: primero.chofer.usuario.id,
+      claveIdempotencia,
+    });
+
+    const segundo = await kit.crearViajeAsignado({ chofer: primero.chofer });
+
+    await assert.rejects(
+      () =>
+        kit.finalizarViaje({
+          viajeId: segundo.viaje.id,
+          choferId: primero.chofer.usuario.id,
+          claveIdempotencia,
+        }),
+      (error) => error.codigo === 'CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO',
+    );
+
+    const viaje = await kit.repositorioViajes.buscarPorId(segundo.viaje.id);
+    assert.equal(viaje.estado, 'ASIGNADO');
+
+    const cobros = await kit.baseDeDatos.query(
+      'SELECT COUNT(*)::int AS total FROM cobros_simulados WHERE viaje_id = $1',
+      [segundo.viaje.id],
+    );
+    assert.equal(cobros.rows[0].total, 0);
+  });
+
   test('aceptación y cancelación simultáneas dejan el viaje cancelado y al chofer libre', async () => {
     const { viaje, pasajero } = await kit.crearViajeDePrueba();
     const { usuario: chofer } = await kit.crearChofer();
@@ -526,6 +691,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     assert.equal(estado.chequeos.usuarios.ok, true);
     assert.equal(estado.chequeos.choferes.ok, true);
     assert.equal(estado.chequeos.viajes.ok, true);
+    assert.equal(estado.chequeos.cobros.ok, true);
     assert.equal(estado.chequeos.idempotencia.ok, true);
 
     const habilitacion = await llamarHttp(`${urlBase}/choferes/${chofer.usuario.id}/habilitacion`, {

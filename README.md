@@ -76,6 +76,12 @@ en curso y cierra la pool de PostgreSQL. Si el cierre supera
 - `docs/implementacion-bloque-5.md`: viajes, concurrencia e idempotencia.
 - `docs/implementacion-bloque-6.md`: PostgreSQL real para tests.
 - `docs/modelo.md`: modelo de dominio y diagramas.
+- `docs/api.md`: referencia de endpoints, errores y rate limits.
+- `docs/politica-de-idempotencia.md`: alcance, reintentos, conflictos y cobros.
+- `docs/auditoria-dependencias.md`: resultados y justificación de la auditoría.
+- `docs/guia-de-prueba-y-rutas.md`: recorrido manual con `curl`.
+- `docs/prueba-manual-requerimientos.md`: verificación manual paso a paso de
+  cobros idempotentes, autorización, rate limits, hardening y ciclo de vida.
 
 ## Puesta en marcha
 
@@ -130,7 +136,8 @@ El servidor queda disponible en `http://localhost:3000`.
 
 - `GET /health`: liveness. No consulta dependencias externas.
 - `GET /ready`: readiness. Comprueba PostgreSQL, las tablas creadas por las
-  migraciones y el reloj, con timeout por dependencia.
+  migraciones (incluidos los cobros), la idempotencia y el reloj, con timeout
+  por dependencia.
 
 Para ejecutar sin base de datos, usar `ADAPTERS_MODE=fake` en `.env`.
 
@@ -172,6 +179,8 @@ Endpoints:
 | `GET` | `/viajes/disponibles` | `CHOFER` habilitado y disponible |
 | `GET` | `/viajes/:id` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` |
 | `POST` | `/viajes/:id/aceptar` | `CHOFER` habilitado y disponible |
+| `POST` | `/viajes/:id/finalizar` | Chofer asignado, con `Idempotency-Key` |
+| `GET` | `/viajes/:id/cobro` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` |
 | `POST` | `/viajes/:id/cancelar` | `PASAJERO` dueño del viaje |
 | `GET` | `/choferes/yo` | `CHOFER` |
 | `PATCH` | `/choferes/yo` | `CHOFER`; únicamente `disponible` |
@@ -192,6 +201,10 @@ Endpoints:
 - El login tiene un límite independiente (`LOGIN_RATE_LIMIT_MAX` intentos
   fallidos por `LOGIN_RATE_LIMIT_WINDOW_MS`). Los logins exitosos no consumen
   cuota.
+- El registro y las operaciones costosas de viajes tienen límites propios
+  (`REGISTRO_RATE_LIMIT_*` y `VIAJES_RATE_LIMIT_*`). Todas las respuestas
+  publican `RateLimit-Limit`, `RateLimit-Remaining` y `RateLimit-Reset`; un
+  `429` agrega `Retry-After`.
 - Las migraciones SQL están en `db/migrations` y se aplican con `pnpm db:migrate`.
 
 ## Viajes, concurrencia e idempotencia
@@ -220,8 +233,17 @@ Endpoints:
 - Cancelar un viaje asignado libera al chofer en la misma transacción. Si la
   cancelación compite con una aceptación, el viaje termina cancelado y ningún
   chofer queda ocupado.
-- `GET /ready` comprueba también las tablas de choferes, viajes y claves de
-  idempotencia.
+- `POST /viajes/:id/finalizar` exige `Idempotency-Key`, finaliza el viaje,
+  libera al chofer y registra un cobro simulado en una sola transacción. La
+  clave se aísla por chofer y el cobro tiene `viaje_id` UNIQUE: un viaje no
+  puede cobrarse dos veces. El replay devuelve `200` con
+  `Idempotency-Replayed: true`.
+- `GET /viajes/:id/cobro` permite consultar el cobro al pasajero, al chofer
+  asignado, a un administrador o a un operador de soporte.
+- `GET /ready` comprueba también las tablas de choferes, viajes, cobros y claves
+  de idempotencia.
+- La política completa de idempotencia y cobros está en
+  `docs/politica-de-idempotencia.md`.
 
 ## Pruebas de integración con PostgreSQL real
 
@@ -273,6 +295,8 @@ pnpm test:db:down        # Baja y borra la base de test
 pnpm lint                # Análisis estático
 pnpm format              # Formateo con Prettier
 pnpm format:check        # Verifica el formato
+pnpm audit:prod          # Audita dependencias de producción
+pnpm audit:all           # Audita también las devDependencies
 pnpm db:prepare          # Levanta PostgreSQL y aplica migraciones
 pnpm db:seed             # Carga usuarios y choferes de prueba
 pnpm db:up               # Levanta PostgreSQL y espera su healthcheck

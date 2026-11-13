@@ -3,11 +3,15 @@ import { randomUUID } from 'node:crypto';
 import { crearAceptarViaje } from '../../src/application/use-cases/viajes/aceptar-viaje.js';
 import { crearCancelarViaje } from '../../src/application/use-cases/viajes/cancelar-viaje.js';
 import { crearCrearViaje } from '../../src/application/use-cases/viajes/crear-viaje.js';
+import { crearFinalizarViaje } from '../../src/application/use-cases/viajes/finalizar-viaje.js';
+import { crearObtenerCobro } from '../../src/application/use-cases/viajes/obtener-cobro.js';
 import { Chofer } from '../../src/domain/entities/chofer.js';
 import { ROLES, Usuario } from '../../src/domain/entities/usuario.js';
 import { SystemClock } from '../../src/infrastructure/adapters/out/clock/system-clock.js';
 import { CryptoIdGenerator } from '../../src/infrastructure/adapters/out/ids/crypto-id-generator.js';
+import { SimuladorDeCobroDeterminista } from '../../src/infrastructure/adapters/out/payments/simulador-de-cobro-determinista.js';
 import { PostgresChoferRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-chofer-repository.js';
+import { PostgresCobroRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-cobro-repository.js';
 import { PostgresDatabase } from '../../src/infrastructure/adapters/out/persistence/postgres-database.js';
 import { PostgresIdempotencyRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-idempotency-repository.js';
 import { PostgresUnitOfWork } from '../../src/infrastructure/adapters/out/persistence/postgres-unit-of-work.js';
@@ -39,7 +43,9 @@ export function crearKitPostgres({ max = 20 } = {}) {
   const repositorioUsuarios = new PostgresUserRepository({ baseDeDatos });
   const repositorioChoferes = new PostgresChoferRepository({ baseDeDatos });
   const repositorioViajes = new PostgresViajeRepository({ baseDeDatos });
+  const repositorioCobros = new PostgresCobroRepository({ baseDeDatos });
   const repositorioClavesIdempotencia = new PostgresIdempotencyRepository({ baseDeDatos });
+  const simuladorDeCobro = new SimuladorDeCobroDeterminista();
   const unidadDeTrabajo = new PostgresUnitOfWork({ baseDeDatos });
   const reloj = new SystemClock();
   const generadorIds = new CryptoIdGenerator();
@@ -49,7 +55,9 @@ export function crearKitPostgres({ max = 20 } = {}) {
     repositorioUsuarios,
     repositorioChoferes,
     repositorioViajes,
+    repositorioCobros,
     repositorioClavesIdempotencia,
+    simuladorDeCobro,
     unidadDeTrabajo,
     reloj,
     generadorIds,
@@ -76,6 +84,19 @@ export function crearKitPostgres({ max = 20 } = {}) {
       unidadDeTrabajo,
       reloj,
     }),
+
+    finalizarViaje: crearFinalizarViaje({
+      repositorioViajes,
+      repositorioChoferes,
+      repositorioCobros,
+      repositorioClavesIdempotencia,
+      simuladorDeCobro,
+      unidadDeTrabajo,
+      reloj,
+      generadorIds,
+    }),
+
+    obtenerCobro: crearObtenerCobro({ repositorioViajes, repositorioCobros }),
 
     async crearUsuario({ rol = ROLES.PASAJERO, email, nombre = 'Usuario de prueba' } = {}) {
       const usuario = new Usuario({
@@ -121,9 +142,20 @@ export function crearKitPostgres({ max = 20 } = {}) {
       return { ...resultado, pasajero: duenio };
     },
 
+    async crearViajeAsignado({ chofer, pasajero, ...sobrescrituras } = {}) {
+      const conductor = chofer ?? (await kit.crearChofer());
+      const creado = await kit.crearViajeDePrueba({ pasajero, ...sobrescrituras });
+      const viaje = await kit.aceptarViaje({
+        viajeId: creado.viaje.id,
+        choferId: conductor.usuario.id,
+      });
+
+      return { viaje, chofer: conductor, pasajero: creado.pasajero };
+    },
+
     async limpiar() {
       await baseDeDatos.query(
-        'TRUNCATE TABLE claves_idempotencia, choferes, viajes, usuarios CASCADE',
+        'TRUNCATE TABLE cobros_simulados, claves_idempotencia, choferes, viajes, usuarios CASCADE',
       );
     },
 

@@ -4,17 +4,21 @@ import { SystemClock } from './infrastructure/adapters/out/clock/system-clock.js
 import { CryptoIdGenerator } from './infrastructure/adapters/out/ids/crypto-id-generator.js';
 import { InMemoryIdGenerator } from './infrastructure/adapters/out/ids/in-memory-id-generator.js';
 import { InMemoryChoferRepository } from './infrastructure/adapters/out/persistence/in-memory-chofer-repository.js';
+import { InMemoryCobroRepository } from './infrastructure/adapters/out/persistence/in-memory-cobro-repository.js';
 import { InMemoryDatabase } from './infrastructure/adapters/out/persistence/in-memory-database.js';
 import { InMemoryIdempotencyRepository } from './infrastructure/adapters/out/persistence/in-memory-idempotency-repository.js';
 import { InMemoryUnitOfWork } from './infrastructure/adapters/out/persistence/in-memory-unit-of-work.js';
 import { InMemoryUserRepository } from './infrastructure/adapters/out/persistence/in-memory-user-repository.js';
 import { InMemoryViajeRepository } from './infrastructure/adapters/out/persistence/in-memory-viaje-repository.js';
 import { PostgresChoferRepository } from './infrastructure/adapters/out/persistence/postgres-chofer-repository.js';
+import { PostgresCobroRepository } from './infrastructure/adapters/out/persistence/postgres-cobro-repository.js';
 import { PostgresDatabase } from './infrastructure/adapters/out/persistence/postgres-database.js';
 import { PostgresIdempotencyRepository } from './infrastructure/adapters/out/persistence/postgres-idempotency-repository.js';
 import { PostgresUnitOfWork } from './infrastructure/adapters/out/persistence/postgres-unit-of-work.js';
 import { PostgresUserRepository } from './infrastructure/adapters/out/persistence/postgres-user-repository.js';
 import { PostgresViajeRepository } from './infrastructure/adapters/out/persistence/postgres-viaje-repository.js';
+import { SimuladorDeCobroDeterminista } from './infrastructure/adapters/out/payments/simulador-de-cobro-determinista.js';
+import { SimuladorDeCobroEnMemoria } from './infrastructure/adapters/out/payments/simulador-de-cobro-en-memoria.js';
 import { BcryptPasswordHasher } from './infrastructure/adapters/out/security/bcrypt-password-hasher.js';
 import { InMemoryPasswordHasher } from './infrastructure/adapters/out/security/in-memory-password-hasher.js';
 import { InMemoryTokenService } from './infrastructure/adapters/out/security/in-memory-token-service.js';
@@ -31,7 +35,9 @@ import { crearObtenerPerfilChofer } from './application/use-cases/choferes/obten
 import { crearAceptarViaje } from './application/use-cases/viajes/aceptar-viaje.js';
 import { crearCancelarViaje } from './application/use-cases/viajes/cancelar-viaje.js';
 import { crearCrearViaje } from './application/use-cases/viajes/crear-viaje.js';
+import { crearFinalizarViaje } from './application/use-cases/viajes/finalizar-viaje.js';
 import { crearListarViajesDisponibles } from './application/use-cases/viajes/listar-viajes-disponibles.js';
+import { crearObtenerCobro } from './application/use-cases/viajes/obtener-cobro.js';
 import { crearObtenerViaje } from './application/use-cases/viajes/obtener-viaje.js';
 
 /**
@@ -74,6 +80,10 @@ export function composeApplication(entorno) {
     ? new InMemoryIdempotencyRepository()
     : new PostgresIdempotencyRepository({ baseDeDatos });
 
+  const repositorioCobros = usaAdaptadoresFalsos
+    ? new InMemoryCobroRepository()
+    : new PostgresCobroRepository({ baseDeDatos });
+
   const unidadDeTrabajo = usaAdaptadoresFalsos
     ? new InMemoryUnitOfWork({
         participantes: [
@@ -81,6 +91,7 @@ export function composeApplication(entorno) {
           repositorioChoferes,
           repositorioViajes,
           repositorioClavesIdempotencia,
+          repositorioCobros,
         ],
       })
     : new PostgresUnitOfWork({ baseDeDatos });
@@ -90,6 +101,10 @@ export function composeApplication(entorno) {
     : new BcryptPasswordHasher({ costo: entorno.PASSWORD_HASH_COST });
 
   const generadorIds = usaAdaptadoresFalsos ? new InMemoryIdGenerator() : new CryptoIdGenerator();
+
+  const simuladorDeCobro = usaAdaptadoresFalsos
+    ? new SimuladorDeCobroEnMemoria()
+    : new SimuladorDeCobroDeterminista();
 
   const servicioDeTokens = usaAdaptadoresFalsos
     ? new InMemoryTokenService({
@@ -146,7 +161,19 @@ export function composeApplication(entorno) {
     unidadDeTrabajo,
     reloj,
   });
+  const finalizarViaje = crearFinalizarViaje({
+    repositorioViajes,
+    repositorioChoferes,
+    repositorioCobros,
+    repositorioClavesIdempotencia,
+    simuladorDeCobro,
+    unidadDeTrabajo,
+    reloj,
+    generadorIds,
+    ttlIdempotenciaMs: entorno.IDEMPOTENCIA_TTL_MS,
+  });
   const obtenerViaje = crearObtenerViaje({ repositorioViajes });
+  const obtenerCobro = crearObtenerCobro({ repositorioViajes, repositorioCobros });
   const listarViajesDisponibles = crearListarViajesDisponibles({
     repositorioViajes,
     repositorioChoferes,
@@ -168,6 +195,7 @@ export function composeApplication(entorno) {
       usuarios: () => repositorioUsuarios.verificarDisponibilidad(),
       choferes: () => repositorioChoferes.verificarDisponibilidad(),
       viajes: () => repositorioViajes.verificarDisponibilidad(),
+      cobros: () => repositorioCobros.verificarDisponibilidad(),
       idempotencia: () => repositorioClavesIdempotencia.verificarDisponibilidad(),
       reloj: () => reloj.ahora() instanceof Date,
     },
@@ -192,7 +220,9 @@ export function composeApplication(entorno) {
       crearViaje,
       aceptarViaje,
       cancelarViaje,
+      finalizarViaje,
       obtenerViaje,
+      obtenerCobro,
       listarViajesDisponibles,
     },
     choferes: {
@@ -205,6 +235,14 @@ export function composeApplication(entorno) {
     rateLimit: {
       windowMs: entorno.RATE_LIMIT_WINDOW_MS,
       limit: entorno.RATE_LIMIT_MAX,
+      registro: {
+        windowMs: entorno.REGISTRO_RATE_LIMIT_WINDOW_MS,
+        limit: entorno.REGISTRO_RATE_LIMIT_MAX,
+      },
+      viajes: {
+        windowMs: entorno.VIAJES_RATE_LIMIT_WINDOW_MS,
+        limit: entorno.VIAJES_RATE_LIMIT_MAX,
+      },
     },
   });
 
@@ -223,6 +261,8 @@ export function composeApplication(entorno) {
     repositorioChoferes,
     repositorioViajes,
     repositorioClavesIdempotencia,
+    repositorioCobros,
+    simuladorDeCobro,
     unidadDeTrabajo,
     hasherContrasenas,
     servicioDeTokens,

@@ -1,26 +1,17 @@
-import { rateLimit } from 'express-rate-limit';
+import { crearLimitador } from './rate-limit.js';
 
-import { obtenerRequestId } from '../../../../context/request-context.js';
+const MENSAJE_LOGIN = 'Demasiados intentos de inicio de sesión. Intentá más tarde.';
 
 /**
  * Limitador específico para intentos de login. Solo cuenta las respuestas
- * fallidas y se reinicia al terminar la ventana.
+ * fallidas y se reinicia al terminar la ventana. Publica los mismos
+ * encabezados informativos que el resto de los limitadores.
  */
 export function crearLimitadorLogin({ windowMs = 15 * 60_000, limit = 5 } = {}) {
-  return rateLimit({
+  return crearLimitador({
     windowMs,
     limit,
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
+    mensaje: MENSAJE_LOGIN,
     skipSuccessfulRequests: true,
-    handler: (req, res) => {
-      res.status(429).json({
-        error: {
-          codigo: 'DEMASIADAS_SOLICITUDES',
-          mensaje: 'Demasiados intentos de inicio de sesión. Intentá más tarde.',
-        },
-        requestId: obtenerRequestId() ?? req.id,
-      });
-    },
   });
 }

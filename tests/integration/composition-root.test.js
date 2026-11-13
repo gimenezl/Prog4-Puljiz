@@ -32,6 +32,7 @@ test('el composition root puede arrancar con adaptadores falsos', async (t) => {
   assert.equal(cuerpo.chequeos.usuarios.ok, true);
   assert.equal(cuerpo.chequeos.choferes.ok, true);
   assert.equal(cuerpo.chequeos.viajes.ok, true);
+  assert.equal(cuerpo.chequeos.cobros.ok, true);
   assert.equal(cuerpo.chequeos.idempotencia.ok, true);
   assert.equal(cuerpo.chequeos.reloj.ok, true);
 });

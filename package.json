@@ -21,6 +21,8 @@
     "test:watch": "node --test --watch tests/",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "audit:prod": "pnpm audit --prod",
+    "audit:all": "pnpm audit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:up": "docker compose up -d --wait db",
