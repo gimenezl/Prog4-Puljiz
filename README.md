@@ -82,6 +82,8 @@ en curso y cierra la pool de PostgreSQL. Si el cierre supera
 - `docs/guia-de-prueba-y-rutas.md`: recorrido manual con `curl`.
 - `docs/prueba-manual-requerimientos.md`: verificación manual paso a paso de
   cobros idempotentes, autorización, rate limits, hardening y ciclo de vida.
+- `docs/verificacion-local-automatica.md`: verificador automático por HTTP
+  (`pnpm verificar`), sus modos, reporte y diagnóstico.
 
 ## Puesta en marcha
 
@@ -292,6 +294,8 @@ pnpm test:integration    # Tests de integración y límites de arquitectura
 pnpm test:integration:db # PostgreSQL real efímero: levanta, migra, prueba y baja
 pnpm test:db:up          # Prepara la base de test y deja el contenedor
 pnpm test:db:down        # Baja y borra la base de test
+pnpm verificar           # Verificación HTTP integral con adaptadores fake
+pnpm verificar:postgres  # Verificación HTTP integral contra PostgreSQL real
 pnpm lint                # Análisis estático
 pnpm format              # Formateo con Prettier
 pnpm format:check        # Verifica el formato

@@ -19,6 +19,8 @@
     "test:db:up": "node scripts/test-database.js up",
     "test:db:down": "node scripts/test-database.js down",
     "test:watch": "node --test --watch tests/",
+    "verificar": "node scripts/verificar-requerimientos.js",
+    "verificar:postgres": "node scripts/verificar-requerimientos.js --postgres",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "audit:prod": "pnpm audit --prod",
