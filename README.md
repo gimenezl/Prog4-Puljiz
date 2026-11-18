@@ -122,7 +122,19 @@ Los datos de prueba quedan disponibles con estas cuentas:
 | `CHOFER` | `chofer2@prog4.test` | `Chofer1234!` |
 
 El seed es idempotente: si una cuenta ya existe con el mismo rol, no la
-duplica ni pisa sus datos.
+duplica ni pisa sus datos. Los dos choferes nacen habilitados y con vehículo
+(`AA100AA` y `AA200AA`), pero **antes de listar o aceptar viajes tienen que
+informar su ubicación**, y repetirla al menos una vez por minuto:
+
+```bash
+curl -X PUT http://localhost:3000/choferes/yo/ubicacion \
+  -H "Authorization: Bearer <token-del-chofer>" \
+  -H "Content-Type: application/json" \
+  -d '{"lat": -34.6037, "lng": -58.3816}'
+```
+
+Para probar a mano con más margen, subir `UBICACION_VIGENCIA_MS` en `.env`
+(por ejemplo, `600000` para 10 minutos).
 
 ### Sin Docker
 
@@ -178,15 +190,18 @@ Endpoints:
 | `GET` | `/usuarios/:id` | Propietario o `ADMINISTRADOR` |
 | `PATCH` | `/usuarios/:id` | Solo propietario; únicamente `nombre` |
 | `POST` | `/viajes` | `PASAJERO`, con `Idempotency-Key` |
-| `GET` | `/viajes/disponibles` | `CHOFER` habilitado y disponible |
+| `GET` | `/viajes/disponibles` | `CHOFER` habilitado, disponible y con ubicación reciente |
 | `GET` | `/viajes/:id` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` |
-| `POST` | `/viajes/:id/aceptar` | `CHOFER` habilitado y disponible |
+| `POST` | `/viajes/:id/aceptar` | `CHOFER` habilitado, disponible y con ubicación reciente |
 | `POST` | `/viajes/:id/finalizar` | Chofer asignado, con `Idempotency-Key` |
 | `GET` | `/viajes/:id/cobro` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` |
 | `POST` | `/viajes/:id/cancelar` | `PASAJERO` dueño del viaje |
 | `GET` | `/choferes/yo` | `CHOFER` |
 | `PATCH` | `/choferes/yo` | `CHOFER`; únicamente `disponible` |
-| `PATCH` | `/choferes/:usuarioId/habilitacion` | `ADMINISTRADOR` |
+| `GET` | `/choferes/yo/vehiculo` | `CHOFER` |
+| `PUT` | `/choferes/yo/vehiculo` | `CHOFER`; crea o edita su vehículo |
+| `PUT` | `/choferes/yo/ubicacion` | `CHOFER` habilitado |
+| `PATCH` | `/choferes/:usuarioId/habilitacion` | `ADMINISTRADOR`; exige vehículo para habilitar |
 
 - Las contraseñas se almacenan con **bcrypt** (`PASSWORD_HASH_COST`, por defecto
   12). Nunca se guardan, devuelven ni registran en texto plano.
@@ -212,8 +227,15 @@ Endpoints:
 ## Viajes, concurrencia e idempotencia
 
 - Al registrarse un `CHOFER` se crea su perfil operativo en la **misma
-  transacción** que el usuario. Nace `habilitado=false` y `disponible=false`;
-  un administrador lo habilita y después el chofer declara disponibilidad.
+  transacción** que el usuario. Nace `habilitado=false` y `disponible=false`.
+  El chofer registra su vehículo (`PUT /choferes/yo/vehiculo`, patente única),
+  un administrador lo habilita (sin vehículo responde
+  `409 CHOFER_SIN_VEHICULO`) y después el chofer declara disponibilidad.
+- Para listar y aceptar viajes, el chofer necesita una **ubicación reciente**:
+  `PUT /choferes/yo/ubicacion` hace menos de `UBICACION_VIGENCIA_MS` (60 s por
+  defecto). La hora la pone el servidor. La ubicación se guarda con PostGIS
+  (`geography(Point, 4326)` con índice GiST, ADR-0006), por eso la base usa la
+  imagen `postgis/postgis`.
 - `POST /viajes` exige la cabecera `Idempotency-Key`. La clave se guarda junto
   con el viaje, el hash SHA-256 del cuerpo canónico y la respuesta original.
   - Misma clave y mismo cuerpo: devuelve el viaje original (`200`, cabecera
@@ -242,8 +264,8 @@ Endpoints:
   `Idempotency-Replayed: true`.
 - `GET /viajes/:id/cobro` permite consultar el cobro al pasajero, al chofer
   asignado, a un administrador o a un operador de soporte.
-- `GET /ready` comprueba también las tablas de choferes, viajes, cobros y claves
-  de idempotencia.
+- `GET /ready` comprueba también las tablas de choferes, viajes, cobros,
+  vehículos, ubicaciones y claves de idempotencia.
 - La política completa de idempotencia y cobros está en
   `docs/politica-de-idempotencia.md`.
 
