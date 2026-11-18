@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { ROLES } from '../../../../../domain/entities/usuario.js';
 import { asyncHandler } from '../async-handler.js';
 import { crearAutorizacionPorRol } from '../middlewares/authorization.js';
-import { esquemaVehiculo } from '../schemas/choferes.schemas.js';
+import { esquemaUbicacion, esquemaVehiculo } from '../schemas/choferes.schemas.js';
 import {
   esquemaDisponibilidadChofer,
   esquemaHabilitacionChofer,
@@ -19,6 +19,7 @@ export function createChoferesRouter({
   habilitarChofer,
   obtenerVehiculo,
   guardarVehiculo,
+  actualizarUbicacionChofer,
   autenticacionRequerida,
 }) {
   const router = Router();
@@ -52,6 +53,21 @@ export function createChoferesRouter({
       });
 
       res.status(creado ? 201 : 200).json({ vehiculo: vehiculo.aVistaPublica() });
+    }),
+  );
+
+  router.put(
+    '/yo/ubicacion',
+    soloChofer,
+    asyncHandler(async (req, res) => {
+      const punto = validarCuerpo(esquemaUbicacion, req.body);
+      const ubicacion = await actualizarUbicacionChofer({
+        choferId: req.autenticacion.usuarioId,
+        solicitante: req.autenticacion,
+        punto,
+      });
+
+      res.json({ ubicacion: ubicacion.aVistaPublica() });
     }),
   );
 

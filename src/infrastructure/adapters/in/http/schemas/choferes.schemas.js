@@ -7,6 +7,14 @@ const texto = (campo) =>
     .min(1, `${campo} es obligatorio.`)
     .max(50, `${campo} no puede superar los 50 caracteres.`);
 
+/** Cuerpo de PUT /choferes/yo/ubicacion. El rango lo valida PuntoGeografico. */
+export const esquemaUbicacion = z
+  .object({
+    lat: z.number({ message: 'La latitud debe ser un número.' }),
+    lng: z.number({ message: 'La longitud debe ser un número.' }),
+  })
+  .strict();
+
 /**
  * Cuerpo de PUT /choferes/yo/vehiculo. El formato de la patente y el rango del
  * año los valida la entidad Vehiculo; aquí solo se acotan tipos y tamaños.
