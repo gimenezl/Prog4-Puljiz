@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { ROLES } from '../../../../../domain/entities/usuario.js';
 import { asyncHandler } from '../async-handler.js';
 import { crearAutorizacionPorRol } from '../middlewares/authorization.js';
+import { esquemaVehiculo } from '../schemas/choferes.schemas.js';
 import {
   esquemaDisponibilidadChofer,
   esquemaHabilitacionChofer,
@@ -16,6 +17,8 @@ export function createChoferesRouter({
   obtenerPerfilChofer,
   actualizarDisponibilidadChofer,
   habilitarChofer,
+  obtenerVehiculo,
+  guardarVehiculo,
   autenticacionRequerida,
 }) {
   const router = Router();
@@ -23,6 +26,34 @@ export function createChoferesRouter({
   const soloAdministrador = crearAutorizacionPorRol(ROLES.ADMINISTRADOR);
 
   router.use(autenticacionRequerida);
+
+  router.get(
+    '/yo/vehiculo',
+    soloChofer,
+    asyncHandler(async (req, res) => {
+      const vehiculo = await obtenerVehiculo({
+        choferId: req.autenticacion.usuarioId,
+        solicitante: req.autenticacion,
+      });
+
+      res.json({ vehiculo: vehiculo.aVistaPublica() });
+    }),
+  );
+
+  router.put(
+    '/yo/vehiculo',
+    soloChofer,
+    asyncHandler(async (req, res) => {
+      const datos = validarCuerpo(esquemaVehiculo, req.body);
+      const { vehiculo, creado } = await guardarVehiculo({
+        choferId: req.autenticacion.usuarioId,
+        solicitante: req.autenticacion,
+        datos,
+      });
+
+      res.status(creado ? 201 : 200).json({ vehiculo: vehiculo.aVistaPublica() });
+    }),
+  );
 
   router.get(
     '/yo',

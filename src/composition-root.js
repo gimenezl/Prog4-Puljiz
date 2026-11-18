@@ -9,6 +9,7 @@ import { InMemoryDatabase } from './infrastructure/adapters/out/persistence/in-m
 import { InMemoryIdempotencyRepository } from './infrastructure/adapters/out/persistence/in-memory-idempotency-repository.js';
 import { InMemoryUnitOfWork } from './infrastructure/adapters/out/persistence/in-memory-unit-of-work.js';
 import { InMemoryUserRepository } from './infrastructure/adapters/out/persistence/in-memory-user-repository.js';
+import { InMemoryVehiculoRepository } from './infrastructure/adapters/out/persistence/in-memory-vehiculo-repository.js';
 import { InMemoryViajeRepository } from './infrastructure/adapters/out/persistence/in-memory-viaje-repository.js';
 import { PostgresChoferRepository } from './infrastructure/adapters/out/persistence/postgres-chofer-repository.js';
 import { PostgresCobroRepository } from './infrastructure/adapters/out/persistence/postgres-cobro-repository.js';
@@ -16,6 +17,7 @@ import { PostgresDatabase } from './infrastructure/adapters/out/persistence/post
 import { PostgresIdempotencyRepository } from './infrastructure/adapters/out/persistence/postgres-idempotency-repository.js';
 import { PostgresUnitOfWork } from './infrastructure/adapters/out/persistence/postgres-unit-of-work.js';
 import { PostgresUserRepository } from './infrastructure/adapters/out/persistence/postgres-user-repository.js';
+import { PostgresVehiculoRepository } from './infrastructure/adapters/out/persistence/postgres-vehiculo-repository.js';
 import { PostgresViajeRepository } from './infrastructure/adapters/out/persistence/postgres-viaje-repository.js';
 import { SimuladorDeCobroDeterminista } from './infrastructure/adapters/out/payments/simulador-de-cobro-determinista.js';
 import { SimuladorDeCobroEnMemoria } from './infrastructure/adapters/out/payments/simulador-de-cobro-en-memoria.js';
@@ -30,8 +32,10 @@ import { crearIniciarSesion } from './application/use-cases/auth/iniciar-sesion.
 import { crearObtenerPerfilUsuario } from './application/use-cases/auth/obtener-perfil-usuario.js';
 import { crearRegistrarUsuario } from './application/use-cases/auth/registrar-usuario.js';
 import { crearActualizarDisponibilidadChofer } from './application/use-cases/choferes/actualizar-disponibilidad-chofer.js';
+import { crearGuardarVehiculo } from './application/use-cases/choferes/guardar-vehiculo.js';
 import { crearHabilitarChofer } from './application/use-cases/choferes/habilitar-chofer.js';
 import { crearObtenerPerfilChofer } from './application/use-cases/choferes/obtener-perfil-chofer.js';
+import { crearObtenerVehiculo } from './application/use-cases/choferes/obtener-vehiculo.js';
 import { crearAceptarViaje } from './application/use-cases/viajes/aceptar-viaje.js';
 import { crearCancelarViaje } from './application/use-cases/viajes/cancelar-viaje.js';
 import { crearCrearViaje } from './application/use-cases/viajes/crear-viaje.js';
@@ -84,6 +88,10 @@ export function composeApplication(entorno) {
     ? new InMemoryCobroRepository()
     : new PostgresCobroRepository({ baseDeDatos });
 
+  const repositorioVehiculos = usaAdaptadoresFalsos
+    ? new InMemoryVehiculoRepository()
+    : new PostgresVehiculoRepository({ baseDeDatos });
+
   const unidadDeTrabajo = usaAdaptadoresFalsos
     ? new InMemoryUnitOfWork({
         participantes: [
@@ -92,6 +100,7 @@ export function composeApplication(entorno) {
           repositorioViajes,
           repositorioClavesIdempotencia,
           repositorioCobros,
+          repositorioVehiculos,
         ],
       })
     : new PostgresUnitOfWork({ baseDeDatos });
@@ -188,6 +197,13 @@ export function composeApplication(entorno) {
     repositorioChoferes,
     unidadDeTrabajo,
   });
+  const obtenerVehiculo = crearObtenerVehiculo({ repositorioVehiculos });
+  const guardarVehiculo = crearGuardarVehiculo({
+    repositorioChoferes,
+    repositorioVehiculos,
+    unidadDeTrabajo,
+    generadorIds,
+  });
 
   const readinessCheck = createReadinessCheck({
     checks: {
@@ -196,6 +212,7 @@ export function composeApplication(entorno) {
       choferes: () => repositorioChoferes.verificarDisponibilidad(),
       viajes: () => repositorioViajes.verificarDisponibilidad(),
       cobros: () => repositorioCobros.verificarDisponibilidad(),
+      vehiculos: () => repositorioVehiculos.verificarDisponibilidad(),
       idempotencia: () => repositorioClavesIdempotencia.verificarDisponibilidad(),
       reloj: () => reloj.ahora() instanceof Date,
     },
@@ -229,6 +246,8 @@ export function composeApplication(entorno) {
       obtenerPerfilChofer,
       actualizarDisponibilidadChofer,
       habilitarChofer,
+      obtenerVehiculo,
+      guardarVehiculo,
     },
     corsOrigin: entorno.CORS_ORIGIN,
     bodyLimit: entorno.BODY_LIMIT,
@@ -262,6 +281,7 @@ export function composeApplication(entorno) {
     repositorioViajes,
     repositorioClavesIdempotencia,
     repositorioCobros,
+    repositorioVehiculos,
     simuladorDeCobro,
     unidadDeTrabajo,
     hasherContrasenas,
