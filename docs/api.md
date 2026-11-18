@@ -83,7 +83,7 @@ Esta tabla coincide exactamente con `ESTADOS_HTTP_POR_CODIGO` en `src/infrastruc
 | `NO_AUTORIZADO` | 403 | El rol no está permitido en la ruta (verificación por rol) o el recurso no pertenece al solicitante (verificación por recurso). Ver §6.1. |
 | `NO_ENCONTRADO` | 404 | El recurso pedido por identificador no existe (usuario, viaje o perfil de chofer). |
 | `EMAIL_YA_REGISTRADO` | 409 | Registro con un email que ya tiene cuenta (sin distinguir mayúsculas). |
-| `TRANSICION_INVALIDA` | 409 | El estado actual del viaje no admite la operación (por ejemplo, cancelar un viaje ya cancelado). |
+| `TRANSICION_INVALIDA` | 409 | El estado actual del viaje no admite la operación (por ejemplo, cancelar un viaje ya cancelado o finalizar uno que no está `ASIGNADO`), o el viaje ya tiene un cobro registrado. |
 | `VIAJE_NO_DISPONIBLE` | 409 | Se intenta aceptar un viaje que ya no está `SOLICITADO` (lo tomó otro chofer o se canceló). |
 | `OFERTA_NO_PENDIENTE` | 409 | *(previsto, E3)* La oferta ya fue aceptada, rechazada o anulada. |
 | `CHOFER_NO_ELEGIBLE` | 409 | El chofer no tiene perfil, no está habilitado o no está disponible (al listar o aceptar viajes, o al declararse disponible sin estar habilitado). |
@@ -107,7 +107,7 @@ No son motivos del dominio: los generan Express, los middlewares o el manejador 
 | `CUERPO_DEMASIADO_GRANDE` | 413 | `error-mapping.js` (`entity.too.large`) | El cuerpo supera `BODY_LIMIT` (100 kB por defecto). |
 | `CODIFICACION_NO_SOPORTADA` | 415 | `error-mapping.js` (`encoding.unsupported`, `charset.unsupported`) | `Content-Encoding` o `charset` no soportados. |
 | `RECURSO_NO_ENCONTRADO` | 404 | `not-found.js` | La ruta o el método no existen (no hay 405). |
-| `DEMASIADAS_SOLICITUDES` | 429 | `app.js` y `login-rate-limit.js` | Se superó el límite global o el de login (§7). Incluye `Retry-After`. |
+| `DEMASIADAS_SOLICITUDES` | 429 | `rate-limit.js` (límites global, de registro y de viajes) y `login-rate-limit.js` | Se superó alguno de los límites de §7. Incluye `Retry-After`. |
 | `SOLICITUD_INVALIDA` | 4xx | `error-handler.js` | Respaldo para un error técnico con estado 4xx sin código conocido. |
 | `ERROR_INTERNO` | 500 | `error-handler.js` | Cualquier error no controlado. El detalle queda solo en el log. |
 
@@ -132,11 +132,11 @@ Todavía **no** están en `error-mapping.js`. La tarjeta que los use debe agrega
 
 | Aspecto | Regla |
 |---|---|
-| **Operaciones que la exigen hoy** | Solo `POST /viajes`. |
+| **Operaciones que la exigen hoy** | `POST /viajes` y `POST /viajes/{id}/finalizar`. La política detallada está en `docs/politica-de-idempotencia.md`. |
 | **Cabecera** | `Idempotency-Key: <texto>`. Obligatoria y no vacía; sin ella se responde `400 CLAVE_DE_IDEMPOTENCIA_REQUERIDA`. Se recomienda un UUID v4 generado por el cliente. Longitud máxima efectiva: 255 caracteres (ver §8, D18). |
-| **Alcance** | Usuario más operación: `viaje:crear:<pasajeroId>`. La misma clave usada por dos pasajeros distintos son dos claves distintas. |
-| **Contenido comparado** | Huella SHA-256 del cuerpo normalizado (`origen` y `destino`, con las claves ordenadas). El orden de las propiedades del JSON no importa. La clave no forma parte de la huella. |
-| **Atomicidad** | La clave se registra en la **misma transacción** que el viaje. Dos solicitudes simultáneas con la misma clave crean un solo viaje y reciben la misma respuesta (ADR-0004, C5). |
+| **Alcance** | Usuario más operación: `viaje:crear:<pasajeroId>` y `viaje:finalizar:<choferId>`. La misma clave usada por dos usuarios distintos son dos claves distintas. |
+| **Contenido comparado** | Huella SHA-256 del contenido normalizado, con las claves ordenadas: `origen` y `destino` al crear; `viajeId` al finalizar. El orden de las propiedades del JSON no importa. La clave no forma parte de la huella. |
+| **Atomicidad** | La clave se registra en la **misma transacción** que el efecto (el viaje creado, o el viaje finalizado con su cobro). Dos solicitudes simultáneas con la misma clave producen un solo efecto y reciben la misma respuesta (ADR-0004, C5). |
 | **Vigencia** | `IDEMPOTENCIA_TTL_MS`: 24 horas por defecto (configurable entre 1 minuto y 7 días). Pasado ese plazo la clave se olvida y una nueva solicitud con la misma clave crea otro viaje. |
 | **Misma clave y mismo contenido** | `200 OK` con la cabecera `Idempotency-Replayed: true` y **la respuesta original guardada**, aunque el viaje haya cambiado de estado después. Para el estado actual se usa `GET /viajes/{id}`. |
 | **Misma clave y otro contenido** | `409 CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO`. No se crea nada. |
@@ -147,7 +147,7 @@ Todavía **no** están en `error-mapping.js`. La tarjeta que los use debe agrega
 | Operación | Exige clave | Estado |
 |---|---|---|
 | `POST /cotizaciones/{id}/confirmar` | Sí. Alcance `cotizacion:confirmar:<pasajeroId>`. | **Propuesto — tarjeta E2 · RF-04 + RF-17 + RF-05 + RF-18 + RF-19** |
-| `POST /viajes/{id}/cobro` | Sí. Alcance `cobro:ejecutar:<usuarioId>`. | **Propuesto — tarjeta E4 · tarifa y cobro** |
+| Cobro simulado | Ya existe: se ejecuta dentro de `POST /viajes/{id}/finalizar`, protegido por su clave y por `viaje_id` único en `cobros_simulados` (§4.4). | Implementado |
 | Aceptar o rechazar oferta, cancelar, avanzar el viaje | No. Son idempotentes por su clave natural: repetirlas no duplica efectos, la segunda recibe `OFERTA_NO_PENDIENTE` o `TRANSICION_INVALIDA` (`docs/modelo.md` Q8). | Propuesto |
 | Cotizar | No. Cada cotización es una foto nueva y no tiene efectos sobre otros recursos. | Propuesto |
 
@@ -419,7 +419,7 @@ Forma del viaje en todas las respuestas:
 | `distanciaEstimadaM` | Distancia en línea recta (Haversine), en metros. |
 | `precioFijadoCentavos` | Precio fijado al crear el viaje. Hoy es la **tarifa provisional por distancia**, sin multiplicador (§8, D1). |
 | `choferId` | Chofer asignado o `null`. Se conserva como historial si el viaje se cancela. |
-| `estado` | Hoy solo `SOLICITADO`, `ASIGNADO` o `CANCELADO_POR_PASAJERO` son alcanzables por la API. |
+| `estado` | Hoy solo `SOLICITADO`, `ASIGNADO`, `FINALIZADO` o `CANCELADO_POR_PASAJERO` son alcanzables por la API. |
 | `solicitadoEn`, `asignadoEn`, `cerradoEn` | Instantes de cada etapa. |
 | `canceladoPorId`, `motivoCancelacion` | Autor y motivo de la cancelación. |
 
@@ -604,6 +604,69 @@ Después, `GET /choferes/yo` devuelve `"viajeActivoId": "5d2e8f14-…"` y `"esta
 | 403 | `NO_AUTORIZADO` | Otro pasajero → `"No tenés permiso para cancelar este viaje."` (por recurso). |
 | 404 | `NO_ENCONTRADO` | `"El viaje no existe."` |
 | 409 | `TRANSICION_INVALIDA` | Ya cancelado → `"El viaje ya no puede cancelarse en su estado actual."` |
+
+#### `POST /viajes/{id}/finalizar`
+
+- **Roles:** `CHOFER`. Por recurso: solo el **chofer asignado**.
+- **Cabeceras:** `Idempotency-Key` obligatoria (§3).
+- **Descripción:** finaliza un viaje `ASIGNADO`, libera al chofer y registra y ejecuta el cobro simulado, todo en una sola transacción. El monto es `precioFijadoCentavos`; el cliente no envía importes. El simulador genera una referencia determinista `SIM-<viajeId>`.
+- **Cuerpo:** ninguno.
+- **Éxito:** `200 OK`
+
+```json
+{
+  "viaje": {
+    "id": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
+    "pasajeroId": "3f1c2a9e-5b7d-4c11-9a2e-0d4b6f8e1a01",
+    "origen": { "lat": -34.6037, "lng": -58.3816 },
+    "destino": { "lat": -34.5889, "lng": -58.4306 },
+    "distanciaEstimadaM": 4777,
+    "precioFijadoCentavos": 338850,
+    "choferId": "7c9e4b21-2d3f-4a8b-b6c5-1e0f9d8a2b02",
+    "estado": "FINALIZADO",
+    "solicitadoEn": "2026-11-18T22:40:14.779Z",
+    "asignadoEn": "2026-11-18T22:40:14.826Z",
+    "cerradoEn": "2026-11-18T22:40:14.885Z",
+    "canceladoPorId": null,
+    "motivoCancelacion": null
+  },
+  "cobro": {
+    "id": "b8c9d0e1-f2a3-4b4c-9d5e-6f7a8b9c0d50",
+    "viajeId": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
+    "montoCentavos": 338850,
+    "estado": "COBRADO",
+    "creadoEn": "2026-11-18T22:40:14.885Z",
+    "cobradoEn": "2026-11-18T22:40:14.888Z",
+    "referencia": "SIM-5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10"
+  }
+}
+```
+
+Después, `GET /choferes/yo` del chofer devuelve `"viajeActivoId": null`.
+
+- **Reintento con la misma clave:** `200 OK`, cabecera `Idempotency-Replayed: true` y la misma respuesta guardada (viaje y cobro).
+- **Errores:**
+
+| HTTP | Código | Ejemplo de causa |
+|---:|---|---|
+| 400 | `CLAVE_DE_IDEMPOTENCIA_REQUERIDA` | `"La cabecera Idempotency-Key es obligatoria para finalizar un viaje y cobrar."` |
+| 403 | `NO_AUTORIZADO` | Un pasajero → `"No tenés permiso para realizar esta operación."` (por rol). |
+| 403 | `NO_AUTORIZADO` | Otro chofer, o un viaje todavía `SOLICITADO` → `"Solo el chofer asignado puede finalizar este viaje."` (por recurso). |
+| 404 | `NO_ENCONTRADO` | `"El viaje no existe."` |
+| 409 | `TRANSICION_INVALIDA` | Ya finalizado (con otra clave) → `"Solo un viaje asignado puede finalizarse."` |
+| 409 | `CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO` | La clave se usó para finalizar otro viaje. |
+
+#### `GET /viajes/{id}/cobro`
+
+- **Roles:** autenticado. Por recurso: el **pasajero del viaje**, el **chofer asignado**, `OPERADOR_SOPORTE` o `ADMINISTRADOR`.
+- **Éxito:** `200 OK` con `{ "cobro": { … } }`, con la forma del cobro de `POST /viajes/{id}/finalizar`.
+- **Errores:**
+
+| HTTP | Código | Ejemplo de causa |
+|---:|---|---|
+| 400 | `DATOS_INVALIDOS` | `id` no es UUID. |
+| 403 | `NO_AUTORIZADO` | Un chofer que no es el asignado → `"No tenés permiso para ver este cobro."` |
+| 404 | `NO_ENCONTRADO` | `"El viaje no existe."` o, si no está finalizado, `"El viaje todavía no tiene un cobro registrado."` |
 
 ### 4.5 Rutas inexistentes
 
@@ -966,10 +1029,10 @@ Todas las transiciones tienen **cuerpo vacío** (salvo la cancelación, que exig
 |---|---|---|---|
 | `POST /viajes/{id}/en-camino` | `CHOFER` asignado | `ASIGNADO` → `CHOFER_EN_CAMINO` | **Propuesto — tarjeta E3 · ofertas y asignación** |
 | `POST /viajes/{id}/iniciar` | `CHOFER` asignado | `CHOFER_EN_CAMINO` → `EN_CURSO` (fija `iniciadoEn`) | **Propuesto — tarjeta E3 · ofertas y asignación** |
-| `POST /viajes/{id}/finalizar` | `CHOFER` asignado | `EN_CURSO` → `FINALIZADO` | **Propuesto — tarjeta E4 · tarifa y cobro** |
+| `POST /viajes/{id}/finalizar` (ajuste) | `CHOFER` asignado | `EN_CURSO` → `FINALIZADO` (hoy existe desde `ASIGNADO`, §4.4) | **Propuesto — tarjeta E4 · tarifa y cobro** |
 | `POST /viajes/{id}/cancelar` (ampliado) | `PASAJERO` dueño, `CHOFER` asignado, `OPERADOR_SOPORTE` | Según el actor, ver abajo. | **Propuesto — tarjetas E3 (chofer) y E5 (soporte)** |
 
-**`POST /viajes/{id}/finalizar`.** No recibe distancia, tiempo ni importes: el servidor calcula `distanciaRealM` con los puntos `EN_CURSO`, `tiempoRealS` y `tarifaFinalCentavos` (`docs/modelo.md` §7.3, opción A: nunca supera `precioFijadoCentavos`). En la misma transacción libera al chofer y crea el cobro en `PENDIENTE`.
+**Ajuste propuesto de `POST /viajes/{id}/finalizar`.** El endpoint ya existe (§4.4): hoy finaliza desde `ASIGNADO` y cobra `precioFijadoCentavos`. Cuando existan `EN_CURSO` y el recorrido, se propone que finalice desde `EN_CURSO` y que el servidor calcule `distanciaRealM` con los puntos `EN_CURSO`, `tiempoRealS` y `tarifaFinalCentavos` (`docs/modelo.md` §7.3, opción A: nunca supera `precioFijadoCentavos`), y que el cobro use ese monto. Sigue sin recibir distancia, tiempo ni importes, y mantiene la clave de idempotencia.
 
 ```json
 {
@@ -987,7 +1050,7 @@ Todas las transiciones tienen **cuerpo vacío** (salvo la cancelación, que exig
   "cobro": {
     "id": "b8c9d0e1-f2a3-4b4c-9d5e-6f7a8b9c0d50",
     "montoCentavos": 452000,
-    "estado": "PENDIENTE"
+    "estado": "COBRADO"
   }
 }
 ```
@@ -1037,38 +1100,7 @@ El transporte (WebSocket o SSE) lo decide el ADR de la tarjeta E4; aquí solo se
 
 ### 5.8 Cobro simulado
 
-Todas: **Propuesto — tarjeta E4 · tarifa y cobro**.
-
-#### `POST /viajes/{id}/cobro`
-
-- **Roles:** `PASAJERO` dueño del viaje.
-- **Cabeceras:** `Idempotency-Key` obligatoria.
-- **Descripción:** ejecuta la simulación del cobro `PENDIENTE` creado al finalizar. No recibe importes: el monto es `tarifaFinalCentavos`. Reintentar no lo duplica ni lo ejecuta dos veces (I8).
-- **Cuerpo:** vacío.
-- **Éxito:** `200 OK`
-
-```json
-{
-  "cobro": {
-    "id": "b8c9d0e1-f2a3-4b4c-9d5e-6f7a8b9c0d50",
-    "viajeId": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
-    "montoCentavos": 452000,
-    "estado": "COBRADO",
-    "creadoEn": "2026-11-20T18:54:00.000Z",
-    "cobradoEn": "2026-11-20T18:54:30.000Z",
-    "referencia": "SIM-000123"
-  }
-}
-```
-
-Si el cobro ya estaba `COBRADO`, devuelve el mismo cobro con `200 OK` (y `Idempotency-Replayed: true` si la clave es la misma).
-
-- **Errores:** `400 CLAVE_DE_IDEMPOTENCIA_REQUERIDA`, `403 NO_AUTORIZADO`, `404 NO_ENCONTRADO` (viaje sin cobro), `409 TRANSICION_INVALIDA` (viaje no finalizado), `409 CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO`.
-
-#### `GET /viajes/{id}/cobro`
-
-- **Roles:** `PASAJERO` y `CHOFER` del viaje, `OPERADOR_SOPORTE`, `ADMINISTRADOR`.
-- **Éxito:** `200 OK` con `{ "cobro": { … } }`.
+El cobro simulado **ya existe**: se registra y se ejecuta dentro de `POST /viajes/{id}/finalizar` y se consulta con `GET /viajes/{id}/cobro` (§4.4). No hace falta un endpoint aparte para cobrar. Lo que queda para **E4 · tarifa y cobro** es que el monto pase a ser `tarifaFinalCentavos` en lugar de `precioFijadoCentavos` (§5.6 y §8, D24).
 
 ### 5.9 Historial y soporte
 
@@ -1167,6 +1199,8 @@ Los endpoints propios de Python (`POST /reportes/zonas/{zonaId}/actualizar` y `G
 | `GET /viajes/{id}` | propio | propio (asignado) | ✓ | ✓ | ✗ |
 | `POST /viajes/{id}/aceptar` | ✗ | ✓ (elegible) | ✗ | ✗ | ✗ |
 | `POST /viajes/{id}/cancelar` (hoy) | propio | ✗ | ✗ | ✗ | ✗ |
+| `POST /viajes/{id}/finalizar` | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
+| `GET /viajes/{id}/cobro` | propio | propio (asignado) | ✓ | ✓ | ✗ |
 | *`POST /usuarios`* | ✗ | ✗ | ✗ | ✓ | ✗ |
 | *`GET /zonas`, `GET /zonas/{id}`, `GET /zonas/{id}/multiplicador`* | ✗ | ✗ | ✓ | ✓ | ✗ |
 | *`POST /zonas`, `PATCH /zonas/{id}`* | ✗ | ✗ | ✗ | ✓ | ✗ |
@@ -1180,12 +1214,10 @@ Los endpoints propios de Python (`POST /reportes/zonas/{zonaId}/actualizar` y `G
 | *`PUT /choferes/yo/ubicacion`* | ✗ | propio | ✗ | ✗ | ✗ |
 | *`GET /ofertas`* | ✗ | propio | ✗ | ✗ | ✗ |
 | *`POST /ofertas/{id}/aceptar`, `…/rechazar`* | ✗ | propio (destinatario) | ✗ | ✗ | ✗ |
-| *`POST /viajes/{id}/en-camino`, `…/iniciar`, `…/finalizar`* | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
+| *`POST /viajes/{id}/en-camino`, `…/iniciar`* | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
 | *`POST /viajes/{id}/cancelar` (ampliado)* | propio | propio (asignado) | ✓ | ✗ | ✗ |
 | *`GET /viajes/{id}/ubicacion`, `…/recorrido`* | propio (activo) | propio (asignado, activo) | ✗ | ✗ | ✗ |
 | *Canal de tiempo real* | propio | propio | ✗ | ✗ | ✗ |
-| *`POST /viajes/{id}/cobro`* | propio | ✗ | ✗ | ✗ | ✗ |
-| *`GET /viajes/{id}/cobro`* | propio | propio | ✓ | ✓ | ✗ |
 | *`GET /viajes` (historial)* | propio | propio | ✗ | ✓ | ✗ |
 | *`GET /viajes/activos`* | ✗ | ✗ | ✓ | ✓ | ✗ |
 | *`GET /integracion/zonas/{zonaId}/viajes-finalizados`* | ✗ | ✗ | ✗ | ✗ | ✓ |
@@ -1218,8 +1250,11 @@ Hoy los casos de uso buscan el recurso **antes** de verificar el permiso: un ide
 |---|---|---|---|---|
 | **Global** | Todas las rutas, incluidas `/health` y `/ready`, por IP. | 300 solicitudes por minuto. | `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de solicitudes. Intente más tarde."`). |
 | **Login** | `POST /auth/login`, por IP. Solo cuentan los intentos **fallidos** (respuesta 4xx o 5xx). | 5 fallos cada 15 minutos. | `LOGIN_RATE_LIMIT_MAX`, `LOGIN_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Demasiados intentos de inicio de sesión. Intentá más tarde."`). |
+| **Registro** | `POST /auth/registro`, por IP. | 10 solicitudes por minuto. | `REGISTRO_RATE_LIMIT_MAX`, `REGISTRO_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de registros. Intente más tarde."`). |
+| **Viajes** | `POST /viajes`, `/aceptar`, `/finalizar` y `/cancelar`, por IP, con un contador **compartido** entre las cuatro rutas. | 30 solicitudes por minuto. | `VIAJES_RATE_LIMIT_MAX`, `VIAJES_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de operaciones sobre viajes. Intente más tarde."`). |
 
-- Ambos devuelven las cabeceras estándar `RateLimit` y `RateLimit-Policy` (borrador 7 del IETF), por ejemplo `RateLimit: limit=5, remaining=0, reset=897`, y `Retry-After` en el 429.
+- Todos devuelven las cabeceras `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` y `RateLimit-Policy` (borrador 6 del IETF), por ejemplo `RateLimit-Limit: 30`, `RateLimit-Remaining: 29`, `RateLimit-Reset: 60`, `RateLimit-Policy: 30;w=60`, y `Retry-After` en el 429. En las rutas con un límite propio, las cabeceras muestran ese límite y no el global.
+- Los límites de registro y de viajes se suman al global: una solicitud cuenta para los dos.
 - El contador del login es **por IP, no por email**: los fallos con distintos emails desde la misma IP se suman, y al superarlo también se rechaza un login correcto desde esa IP hasta que vence la ventana.
 - Los contadores viven **en memoria del proceso**: con varias instancias cada una cuenta por separado (ADR-0003).
 - `trust proxy` está en `1`: detrás de un proxy, la IP es la del primer salto de `X-Forwarded-For`.
@@ -1228,7 +1263,6 @@ Hoy los casos de uso buscan el recurso **antes** de verificar el permiso: un ide
 
 | Endpoint | Motivo | Propuesta | Tarjeta |
 |---|---|---|---|
-| `POST /auth/registro` | bcrypt con costo 12 es caro y permite crear cuentas en masa. | Límite por IP, por ejemplo 10 por hora. | E1 · RF-01 y base transversal |
 | `POST /cotizaciones` | Cuenta solicitudes y choferes de la zona en cada llamada (ADR-0005, A1). | Límite por usuario, por ejemplo 30 por minuto. | E2 · cotizar y confirmar |
 | `PUT /choferes/yo/ubicacion` | Alta frecuencia por diseño. | Límite por chofer, por ejemplo 1 por segundo, independiente del global. | E2 · RF-02 + RF-03 |
 | `GET /reportes/zonas/{zonaId}` | Llama a otro servicio. | Límite por usuario, por ejemplo 10 por minuto. | E4 · parte Python |
@@ -1261,7 +1295,7 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 | D4 | Habilitar no exige vehículo. | Habilitar exige un vehículo registrado (§6.4, Q11, propuesta). | `PATCH /choferes/{id}/habilitacion` habilita sin condición; no existe el vehículo. | E2 · RF-02 + RF-03 |
 | D5 | Faltan estados del viaje. | `CHOFER_EN_CAMINO`, `EN_CURSO`, `FINALIZADO`, `CANCELADO_POR_CHOFER`, `CANCELADO_POR_SOPORTE` y `SIN_CHOFERES_DISPONIBLES` con sus transiciones (§6.1). | La entidad `Viaje` del dominio no tiene `CHOFER_EN_CAMINO` ni `EN_CURSO` (la migración `002_viajes.sql` sí los admite), y solo hay transiciones `SOLICITADO → ASIGNADO` y cancelación por pasajero. | E3 · ofertas y asignación, E4 · tarifa y cobro |
 | D6 | El pasajero no puede cancelar con el chofer en camino. | El pasajero cancela en `SOLICITADO`, `ASIGNADO` y `CHOFER_EN_CAMINO` (§6.1). | `cancelarPorPasajero` solo admite `SOLICITADO` y `ASIGNADO` (consecuencia de D5). | E3 · ofertas y asignación |
-| D7 | Faltan atributos del viaje. | `iniciadoEn`, `distanciaRealM`, `tiempoRealS`, `tarifaFinal` (§4.10). | No existen. | E4 · tarifa y cobro |
+| D7 | Faltan atributos del viaje. | `iniciadoEn`, `distanciaRealM`, `tiempoRealS`, `tarifaFinal` (§4.10). | No existen. `POST /viajes/{id}/finalizar` solo fija `cerradoEn`. | E4 · tarifa y cobro |
 | D8 | Nombre del precio. | `precioFijado` (§4.10). | `precioFijadoCentavos`. Se propone adoptar el sufijo `Centavos` en todos los montos de la API (§1) y alinear el modelo. | E2 · cotizar y confirmar |
 | D9 | Tarifa provisional distinta de la del modelo. | `Tarifa` versionada con `base`, `porKm`, `porMinuto` y `precioMaximo`; sin mínimo (§4.7, §7.2). | Variables de entorno `TARIFA_BASE_CENTAVOS`, `TARIFA_POR_KM_CENTAVOS`, `TARIFA_MINIMO_CENTAVOS` y `TARIFA_MAXIMO_CENTAVOS`; sin componente por minuto; con mínimo. | E2 · RF-23 + RF-16 |
 | D10 | Soporte no ve usuarios. | El operador ve los datos básicos de los participantes de los viajes que atiende (§3). | `GET /usuarios/{id}` solo admite al propio usuario y al administrador; soporte recibe 403. | E5 · historial y soporte |
@@ -1278,3 +1312,7 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 | D21 | Errores del parser fuera del límite global. | — | `express.json()` se ejecuta antes del rate limit global: un JSON mal formado o demasiado grande se rechaza sin contar para el límite y sin cabeceras `RateLimit`. | E1 · RF-01 y base transversal |
 | D22 | El límite global incluye `/health` y `/ready`. | — | El healthcheck de Docker y un monitor externo consumen cuota de la misma IP. Evaluar excluirlos del límite. | E1 · RF-01 y base transversal |
 | D23 | `GET /viajes/disponibles` sin paginación. | — | Devuelve hasta 50 viajes fijos; el caso de uso admite `limite`, pero la ruta no lo expone. Se resuelve con `GET /ofertas` (D2). | E3 · ofertas y asignación |
+| D24 | Se finaliza sin pasar por `EN_CURSO` y se cobra el precio fijado. | `EN_CURSO` → `FINALIZADO`, con tarifa final calculada sobre el recorrido real; el cobro nace `PENDIENTE` y se ejecuta después (§4.12, §6.1, §7.3). | `POST /viajes/{id}/finalizar` pasa de `ASIGNADO` a `FINALIZADO` y cobra `precioFijadoCentavos` en la misma transacción; el cobro queda `COBRADO` directamente. Es razonable mientras no existan `EN_CURSO` ni el recorrido. | E3 · ofertas y asignación (estados), E4 · tarifa y cobro (monto) |
+| D25 | Finalizar exige clave de idempotencia. | Q8 proponía que avanzar el viaje fuera idempotente solo por su clave natural. | Finalizar exige `Idempotency-Key`, porque además cobra. Se propone adoptarlo en el modelo y en la política de idempotencia (ya está en `docs/politica-de-idempotencia.md`). | E1 · RF-01 y base transversal |
+| D26 | El límite de viajes se evalúa antes que el rol. | — | En `/viajes`, el limitador corre antes de `crearAutorizacionPorRol`: un pasajero que llama a `/aceptar` o `/finalizar` recibe 403, pero consume cupo del límite de viajes de su IP. | E1 · RF-01 y base transversal |
+| D27 | `finalizar` sobre un viaje `SOLICITADO` responde 403. | Un estado que no admite la operación es `TRANSICION_INVALIDA` (§9.1). | Como el viaje no tiene chofer, el caso de uso responde `403 NO_AUTORIZADO` (`"Solo el chofer asignado puede finalizar este viaje."`) en lugar de `409`. | E3 · ofertas y asignación |

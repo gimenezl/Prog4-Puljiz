@@ -14,9 +14,12 @@ export function createViajesRouter({
   crearViaje,
   aceptarViaje,
   cancelarViaje,
+  finalizarViaje,
   obtenerViaje,
+  obtenerCobro,
   listarViajesDisponibles,
   autenticacionRequerida,
+  limitadorViajes,
 }) {
   const router = Router();
   const soloPasajero = crearAutorizacionPorRol(ROLES.PASAJERO);
@@ -26,6 +29,7 @@ export function createViajesRouter({
 
   router.post(
     '/',
+    limitadorViajes,
     soloPasajero,
     asyncHandler(async (req, res) => {
       const { origen, destino } = validarCuerpo(esquemaCrearViaje, req.body);
@@ -57,6 +61,19 @@ export function createViajesRouter({
   );
 
   router.get(
+    '/:id/cobro',
+    asyncHandler(async (req, res) => {
+      const viajeId = validarIdentificador(req.params.id);
+      const cobro = await obtenerCobro({
+        viajeId,
+        solicitante: req.autenticacion,
+      });
+
+      res.json({ cobro: cobro.aVistaPublica() });
+    }),
+  );
+
+  router.get(
     '/:id',
     asyncHandler(async (req, res) => {
       const viajeId = validarIdentificador(req.params.id);
@@ -71,6 +88,7 @@ export function createViajesRouter({
 
   router.post(
     '/:id/aceptar',
+    limitadorViajes,
     soloChofer,
     asyncHandler(async (req, res) => {
       const viajeId = validarIdentificador(req.params.id);
@@ -84,7 +102,28 @@ export function createViajesRouter({
   );
 
   router.post(
+    '/:id/finalizar',
+    limitadorViajes,
+    soloChofer,
+    asyncHandler(async (req, res) => {
+      const viajeId = validarIdentificador(req.params.id);
+      const { viaje, cobro, reutilizada } = await finalizarViaje({
+        viajeId,
+        choferId: req.autenticacion.usuarioId,
+        claveIdempotencia: req.get('idempotency-key'),
+      });
+
+      if (reutilizada) {
+        res.set('Idempotency-Replayed', 'true');
+      }
+
+      res.json({ viaje, cobro });
+    }),
+  );
+
+  router.post(
     '/:id/cancelar',
+    limitadorViajes,
     soloPasajero,
     asyncHandler(async (req, res) => {
       const viajeId = validarIdentificador(req.params.id);

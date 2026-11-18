@@ -25,19 +25,33 @@ export function startHttpServer({ app, host, port, logger }) {
 /**
  * Deja de aceptar conexiones nuevas, cierra las conexiones inactivas y
  * espera a que terminen las solicitudes en curso.
+ *
+ * `closeIdleConnections` se repite mientras el cierre está pendiente porque una
+ * conexión keep-alive puede quedar inactiva recién cuando termina el último
+ * pedido en vuelo. Sin ese cierre diferido, `server.close` esperaría a que el
+ * cliente cierre la conexión y el apagado terminaría forzado por timeout.
  */
 export async function closeHttpServer(servidor) {
   if (!servidor.listening) return;
 
   servidor.closeIdleConnections?.();
 
-  await new Promise((resolve, reject) => {
-    servidor.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
+  const intervalo = setInterval(() => {
+    servidor.closeIdleConnections?.();
+  }, 50);
+  intervalo.unref?.();
+
+  try {
+    await new Promise((resolve, reject) => {
+      servidor.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
     });
-  });
+  } finally {
+    clearInterval(intervalo);
+  }
 }

@@ -23,6 +23,10 @@ test('acepta el modo fake sin DATABASE_URL', () => {
   assert.equal(entorno.PASSWORD_HASH_COST, 12);
   assert.equal(entorno.LOGIN_RATE_LIMIT_WINDOW_MS, 900000);
   assert.equal(entorno.LOGIN_RATE_LIMIT_MAX, 5);
+  assert.equal(entorno.REGISTRO_RATE_LIMIT_WINDOW_MS, 60000);
+  assert.equal(entorno.REGISTRO_RATE_LIMIT_MAX, 10);
+  assert.equal(entorno.VIAJES_RATE_LIMIT_WINDOW_MS, 60000);
+  assert.equal(entorno.VIAJES_RATE_LIMIT_MAX, 30);
   assert.equal(entorno.TARIFA_BASE_CENTAVOS, 100000);
   assert.equal(entorno.TARIFA_POR_KM_CENTAVOS, 50000);
   assert.equal(entorno.TARIFA_MINIMO_CENTAVOS, 150000);

@@ -14,11 +14,13 @@ export function createAuthRouter({
   obtenerPerfilUsuario,
   autenticacionRequerida,
   limitadorLogin,
+  limitadorRegistro,
 }) {
   const router = Router();
 
   router.post(
     '/registro',
+    limitadorRegistro,
     asyncHandler(async (req, res) => {
       const datos = validarCuerpo(esquemaRegistro, req.body);
       const usuario = await registrarUsuario(datos);

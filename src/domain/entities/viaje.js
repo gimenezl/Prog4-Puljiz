@@ -251,6 +251,27 @@ export class Viaje {
     });
   }
 
+  /** Finaliza el viaje asignado y fija la fecha de cierre. */
+  finalizar(ahora) {
+    if (this.#estado !== ESTADOS_VIAJE.ASIGNADO) {
+      throw new ErrorDeDominio('TRANSICION_INVALIDA', 'Solo un viaje asignado puede finalizarse.');
+    }
+
+    return new Viaje({
+      id: this.#id,
+      pasajeroId: this.#pasajeroId,
+      origen: this.#origen,
+      destino: this.#destino,
+      distanciaEstimadaM: this.#distanciaEstimadaM,
+      precioFijadoCentavos: this.#precioFijadoCentavos,
+      choferId: this.#choferId,
+      estado: ESTADOS_VIAJE.FINALIZADO,
+      solicitadoEn: this.#solicitadoEn,
+      asignadoEn: this.#asignadoEn,
+      cerradoEn: validarFecha(ahora, 'La fecha de cierre no es válida.'),
+    });
+  }
+
   /** Cancela el viaje por decisión de su pasajero. */
   cancelarPorPasajero(ahora, motivo) {
     if (this.#estado !== ESTADOS_VIAJE.SOLICITADO && this.#estado !== ESTADOS_VIAJE.ASIGNADO) {
