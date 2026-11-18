@@ -113,6 +113,13 @@ async function prepararChofer(composicion, urlBase, admin, datos) {
   });
   assert.equal(disponibilidad.respuesta.status, 200);
 
+  const ubicacion = await llamar(`${urlBase}/choferes/yo/ubicacion`, {
+    method: 'PUT',
+    token: sesion.token,
+    body: { lat: -34.6037, lng: -58.3816 },
+  });
+  assert.equal(ubicacion.respuesta.status, 200);
+
   return sesion;
 }
 
@@ -194,6 +201,18 @@ test('flujo completo: registro de chofer, idempotencia, aceptación y cancelaci�
   });
   assert.equal(disponibilidad.respuesta.status, 200);
   assert.equal(disponibilidad.cuerpo.chofer.estado, 'DISPONIBLE');
+
+  // Sin ubicación reciente el chofer todavía no es elegible.
+  const sinUbicacion = await llamar(`${urlBase}/viajes/disponibles`, { token: chofer.token });
+  assert.equal(sinUbicacion.respuesta.status, 409);
+  assert.equal(sinUbicacion.cuerpo.error.codigo, 'CHOFER_NO_ELEGIBLE');
+
+  const ubicacion = await llamar(`${urlBase}/choferes/yo/ubicacion`, {
+    method: 'PUT',
+    token: chofer.token,
+    body: { lat: -34.6037, lng: -58.3816 },
+  });
+  assert.equal(ubicacion.respuesta.status, 200);
 
   const viajePorChofer = await crearViaje(urlBase, chofer.token);
   assert.equal(viajePorChofer.respuesta.status, 403);

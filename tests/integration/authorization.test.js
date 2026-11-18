@@ -114,6 +114,13 @@ async function habilitarChofer(urlBase, admin, chofer) {
     body: { disponible: true },
   });
   assert.equal(disponibilidad.respuesta.status, 200);
+
+  const ubicacion = await llamar(`${urlBase}/choferes/yo/ubicacion`, {
+    method: 'PUT',
+    token: chofer.token,
+    body: { lat: -34.6037, lng: -58.3816 },
+  });
+  assert.equal(ubicacion.respuesta.status, 200);
 }
 
 async function crearViajeAsignado(urlBase, pasajero, chofer) {

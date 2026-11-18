@@ -112,6 +112,13 @@ async function prepararChofer(composicion, urlBase, admin, datos) {
   });
   assert.equal(disponibilidad.respuesta.status, 200);
 
+  const ubicacion = await llamar(`${urlBase}/choferes/yo/ubicacion`, {
+    method: 'PUT',
+    token: sesion.token,
+    body: { lat: -34.6037, lng: -58.3816 },
+  });
+  assert.equal(ubicacion.respuesta.status, 200);
+
   return sesion;
 }
 

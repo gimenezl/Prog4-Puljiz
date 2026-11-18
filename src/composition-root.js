@@ -169,8 +169,10 @@ export function composeApplication(entorno) {
   const aceptarViaje = crearAceptarViaje({
     repositorioViajes,
     repositorioChoferes,
+    repositorioUbicaciones,
     unidadDeTrabajo,
     reloj,
+    vigenciaUbicacionMs: entorno.UBICACION_VIGENCIA_MS,
   });
   const cancelarViaje = crearCancelarViaje({
     repositorioViajes,
@@ -194,6 +196,9 @@ export function composeApplication(entorno) {
   const listarViajesDisponibles = crearListarViajesDisponibles({
     repositorioViajes,
     repositorioChoferes,
+    repositorioUbicaciones,
+    reloj,
+    vigenciaUbicacionMs: entorno.UBICACION_VIGENCIA_MS,
   });
 
   const obtenerPerfilChofer = crearObtenerPerfilChofer({ repositorioChoferes });

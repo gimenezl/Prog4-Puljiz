@@ -10,6 +10,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 
 import { composeApplication } from '../../src/composition-root.js';
 import { Chofer } from '../../src/domain/entities/chofer.js';
+import { UbicacionChofer } from '../../src/domain/entities/ubicacion-chofer.js';
 import { ROLES, Usuario } from '../../src/domain/entities/usuario.js';
 import { Vehiculo } from '../../src/domain/entities/vehiculo.js';
 import { loadEnv } from '../../src/infrastructure/config/env.js';
@@ -161,6 +162,14 @@ export async function sembrarUsuarios(contexto, definiciones) {
           patente: patenteAleatoria(),
           marca: 'Toyota',
           modelo: 'Etios',
+        }),
+      );
+      // Ubicación reciente para que pueda listar y aceptar viajes (RF-03).
+      await dependencias.repositorioUbicaciones.guardar(
+        new UbicacionChofer({
+          choferId: usuario.id,
+          punto: { lat: -34.6037, lng: -58.3816 },
+          actualizadaEn: ahora,
         }),
       );
     }

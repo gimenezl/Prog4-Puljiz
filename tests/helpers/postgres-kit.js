@@ -6,6 +6,7 @@ import { crearCrearViaje } from '../../src/application/use-cases/viajes/crear-vi
 import { crearFinalizarViaje } from '../../src/application/use-cases/viajes/finalizar-viaje.js';
 import { crearObtenerCobro } from '../../src/application/use-cases/viajes/obtener-cobro.js';
 import { Chofer } from '../../src/domain/entities/chofer.js';
+import { UbicacionChofer } from '../../src/domain/entities/ubicacion-chofer.js';
 import { ROLES, Usuario } from '../../src/domain/entities/usuario.js';
 import { SystemClock } from '../../src/infrastructure/adapters/out/clock/system-clock.js';
 import { CryptoIdGenerator } from '../../src/infrastructure/adapters/out/ids/crypto-id-generator.js';
@@ -19,7 +20,7 @@ import { PostgresUnitOfWork } from '../../src/infrastructure/adapters/out/persis
 import { PostgresUserRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-user-repository.js';
 import { PostgresVehiculoRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-vehiculo-repository.js';
 import { PostgresViajeRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-viaje-repository.js';
-import { DESTINO, ORIGEN, TARIFA_DE_PRUEBA } from './viajes-kit.js';
+import { DESTINO, ORIGEN, TARIFA_DE_PRUEBA, VIGENCIA_UBICACION_MS } from './viajes-kit.js';
 
 /**
  * Kit de integración con PostgreSQL real.
@@ -80,8 +81,10 @@ export function crearKitPostgres({ max = 20 } = {}) {
     aceptarViaje: crearAceptarViaje({
       repositorioViajes,
       repositorioChoferes,
+      repositorioUbicaciones,
       unidadDeTrabajo,
       reloj,
+      vigenciaUbicacionMs: VIGENCIA_UBICACION_MS,
     }),
 
     cancelarViaje: crearCancelarViaje({
@@ -131,6 +134,9 @@ export function crearKitPostgres({ max = 20 } = {}) {
       });
 
       await repositorioChoferes.crear(perfil);
+      await repositorioUbicaciones.guardar(
+        new UbicacionChofer({ choferId: usuario.id, punto: ORIGEN, actualizadaEn: reloj.ahora() }),
+      );
       return { usuario, perfil };
     },
 
