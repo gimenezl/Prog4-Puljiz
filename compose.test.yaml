@@ -2,7 +2,7 @@ name: prog4-puljiz-test
 
 services:
   db-test:
-    image: postgres:15-alpine
+    image: postgis/postgis:15-3.4-alpine
     container_name: prog4-puljiz-db-test
     restart: 'no'
     environment:

@@ -120,8 +120,14 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       `SELECT table_name
          FROM information_schema.tables
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+          AND table_name <> 'spatial_ref_sys' -- la crea la extensión PostGIS
         ORDER BY table_name`,
     );
+
+    const postgis = await kit.baseDeDatos.query(
+      `SELECT extversion FROM pg_extension WHERE extname = 'postgis'`,
+    );
+    assert.equal(postgis.rows.length, 1, 'falta la extensión PostGIS');
 
     assert.deepEqual(
       tablas.rows.map((fila) => fila.table_name),
