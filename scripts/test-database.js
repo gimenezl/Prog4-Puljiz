@@ -94,7 +94,7 @@ async function bajarContenedor() {
 async function correrTests() {
   const resultado = await ejecutar(
     process.execPath,
-    ['--test', '--test-concurrency=1', 'tests/integration/postgres/'],
+    ['--test', '--test-concurrency=1', 'tests/integration/postgres/**/*.test.js'],
     {
       env: {
         ...process.env,

@@ -76,7 +76,7 @@ en curso y cierra la pool de PostgreSQL. Si el cierre supera
 - `docs/implementacion-bloque-5.md`: viajes, concurrencia e idempotencia.
 - `docs/implementacion-bloque-6.md`: PostgreSQL real para tests.
 - `docs/modelo.md`: modelo de dominio y diagramas.
-- `docs/api.md`: referencia de endpoints, errores y rate limits.
+- `docs/api.md`: contrato de la API HTTP, códigos de error, rate limits y tabla de permisos.
 - `docs/politica-de-idempotencia.md`: alcance, reintentos, conflictos y cobros.
 - `docs/auditoria-dependencias.md`: resultados y justificación de la auditoría.
 - `docs/guia-de-prueba-y-rutas.md`: recorrido manual con `curl`.
