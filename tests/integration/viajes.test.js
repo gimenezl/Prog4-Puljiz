@@ -5,6 +5,7 @@ import { composeApplication } from '../../src/composition-root.js';
 import { ROLES, Usuario } from '../../src/domain/entities/usuario.js';
 import { loadEnv } from '../../src/infrastructure/config/env.js';
 import { detenerServidor, iniciarServidor } from '../helpers/http-server.js';
+import { datosDeVehiculoDePrueba } from '../helpers/vehiculos-kit.js';
 
 const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
 const ORIGEN = { lat: -34.6037, lng: -58.3816 };
@@ -91,6 +92,13 @@ async function crearAdministrador(composicion, urlBase) {
 async function prepararChofer(composicion, urlBase, admin, datos) {
   const sesion = await crearCuenta(urlBase, { ...datos, rol: 'CHOFER' });
 
+  const vehiculo = await llamar(`${urlBase}/choferes/yo/vehiculo`, {
+    method: 'PUT',
+    token: sesion.token,
+    body: datosDeVehiculoDePrueba(),
+  });
+  assert.equal(vehiculo.respuesta.status, 201);
+
   const habilitacion = await llamar(`${urlBase}/choferes/${sesion.usuario.id}/habilitacion`, {
     method: 'PATCH',
     token: admin.token,
@@ -156,6 +164,20 @@ test('flujo completo: registro de chofer, idempotencia, aceptaci√≥n y cancelaci√
     body: { habilitado: true },
   });
   assert.equal(habilitacionAjena.respuesta.status, 403);
+
+  const habilitacionSinVehiculo = await llamar(
+    `${urlBase}/choferes/${chofer.usuario.id}/habilitacion`,
+    { method: 'PATCH', token: admin.token, body: { habilitado: true } },
+  );
+  assert.equal(habilitacionSinVehiculo.respuesta.status, 409);
+  assert.equal(habilitacionSinVehiculo.cuerpo.error.codigo, 'CHOFER_SIN_VEHICULO');
+
+  const vehiculo = await llamar(`${urlBase}/choferes/yo/vehiculo`, {
+    method: 'PUT',
+    token: chofer.token,
+    body: datosDeVehiculoDePrueba(),
+  });
+  assert.equal(vehiculo.respuesta.status, 201);
 
   const habilitacion = await llamar(`${urlBase}/choferes/${chofer.usuario.id}/habilitacion`, {
     method: 'PATCH',

@@ -195,6 +195,7 @@ export function composeApplication(entorno) {
   });
   const habilitarChofer = crearHabilitarChofer({
     repositorioChoferes,
+    repositorioVehiculos,
     unidadDeTrabajo,
   });
   const obtenerVehiculo = crearObtenerVehiculo({ repositorioVehiculos });

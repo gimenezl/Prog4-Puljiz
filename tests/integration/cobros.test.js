@@ -6,6 +6,7 @@ import { composeApplication } from '../../src/composition-root.js';
 import { ROLES, Usuario } from '../../src/domain/entities/usuario.js';
 import { loadEnv } from '../../src/infrastructure/config/env.js';
 import { detenerServidor, iniciarServidor } from '../helpers/http-server.js';
+import { datosDeVehiculoDePrueba } from '../helpers/vehiculos-kit.js';
 
 const ORIGEN = { lat: -34.6037, lng: -58.3816 };
 const DESTINO = { lat: -34.6083, lng: -58.3712 };
@@ -89,6 +90,13 @@ async function crearCuentaDirecta(composicion, { rol, email }) {
 
 async function prepararChofer(composicion, urlBase, admin, datos) {
   const sesion = await crearCuenta(urlBase, { ...datos, rol: ROLES.CHOFER });
+
+  const vehiculo = await llamar(`${urlBase}/choferes/yo/vehiculo`, {
+    method: 'PUT',
+    token: sesion.token,
+    body: datosDeVehiculoDePrueba(),
+  });
+  assert.equal(vehiculo.respuesta.status, 201);
 
   const habilitacion = await llamar(`${urlBase}/choferes/${sesion.usuario.id}/habilitacion`, {
     method: 'PATCH',

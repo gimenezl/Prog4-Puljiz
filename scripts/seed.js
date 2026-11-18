@@ -1,6 +1,7 @@
 import { composeApplication } from '../src/composition-root.js';
 import { Chofer } from '../src/domain/entities/chofer.js';
 import { ROLES, Usuario } from '../src/domain/entities/usuario.js';
+import { Vehiculo } from '../src/domain/entities/vehiculo.js';
 import { validarContrasena } from '../src/domain/value-objects/contrasena.js';
 import { loadEnv } from '../src/infrastructure/config/env.js';
 
@@ -28,12 +29,14 @@ const CUENTAS = Object.freeze([
     email: 'chofer1@prog4.test',
     nombre: 'Chofer de prueba 1',
     contrasena: 'Chofer1234!',
+    vehiculo: { patente: 'AA100AA', marca: 'Toyota', modelo: 'Etios', anio: 2021 },
   },
   {
     rol: ROLES.CHOFER,
     email: 'chofer2@prog4.test',
     nombre: 'Chofer de prueba 2',
     contrasena: 'Chofer1234!',
+    vehiculo: { patente: 'AA200AA', marca: 'Fiat', modelo: 'Cronos', anio: 2023 },
   },
 ]);
 
@@ -57,6 +60,22 @@ async function asegurarPerfilChofer(composicion, usuario) {
   const perfil = perfilChoferHabilitado(usuario.id);
   await composicion.repositorioChoferes.crear(perfil);
   return perfil;
+}
+
+// Los choferes del seed nacen habilitados, así que necesitan vehículo (Q11).
+async function asegurarVehiculo(composicion, usuario, datos) {
+  const existente = await composicion.repositorioVehiculos.buscarPorChoferId(usuario.id);
+
+  if (existente) return existente;
+
+  const vehiculo = new Vehiculo({
+    id: composicion.generadorIds.generar(),
+    choferId: usuario.id,
+    ...datos,
+  });
+  await composicion.repositorioVehiculos.guardar(vehiculo);
+  informar(`vehículo ${vehiculo.patente} registrado para ${usuario.email}.`);
+  return vehiculo;
 }
 
 async function asegurarCuenta(composicion, cuenta) {
@@ -116,7 +135,11 @@ async function principal() {
 
   try {
     for (const cuenta of CUENTAS) {
-      await asegurarCuenta(composicion, cuenta);
+      const usuario = await asegurarCuenta(composicion, cuenta);
+
+      if (cuenta.vehiculo) {
+        await asegurarVehiculo(composicion, usuario, cuenta.vehiculo);
+      }
     }
 
     informar('Datos de prueba disponibles:');

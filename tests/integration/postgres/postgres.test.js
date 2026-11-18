@@ -743,6 +743,14 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     assert.equal(estado.chequeos.viajes.ok, true);
     assert.equal(estado.chequeos.cobros.ok, true);
     assert.equal(estado.chequeos.idempotencia.ok, true);
+    assert.equal(estado.chequeos.vehiculos.ok, true);
+
+    const vehiculo = await llamarHttp(`${urlBase}/choferes/yo/vehiculo`, {
+      method: 'PUT',
+      token: chofer.token,
+      body: { patente: 'AE123ZZ', marca: 'Toyota', modelo: 'Etios' },
+    });
+    assert.equal(vehiculo.respuesta.status, 201);
 
     const habilitacion = await llamarHttp(`${urlBase}/choferes/${chofer.usuario.id}/habilitacion`, {
       method: 'PATCH',

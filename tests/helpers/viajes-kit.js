@@ -9,6 +9,7 @@ import { crearListarViajesDisponibles } from '../../src/application/use-cases/vi
 import { crearObtenerCobro } from '../../src/application/use-cases/viajes/obtener-cobro.js';
 import { crearObtenerViaje } from '../../src/application/use-cases/viajes/obtener-viaje.js';
 import { Chofer } from '../../src/domain/entities/chofer.js';
+import { Vehiculo } from '../../src/domain/entities/vehiculo.js';
 import { FixedClock } from '../../src/infrastructure/adapters/out/clock/fixed-clock.js';
 import { InMemoryIdGenerator } from '../../src/infrastructure/adapters/out/ids/in-memory-id-generator.js';
 import { SimuladorDeCobroEnMemoria } from '../../src/infrastructure/adapters/out/payments/simulador-de-cobro-en-memoria.js';
@@ -16,7 +17,9 @@ import { InMemoryChoferRepository } from '../../src/infrastructure/adapters/out/
 import { InMemoryCobroRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-cobro-repository.js';
 import { InMemoryIdempotencyRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-idempotency-repository.js';
 import { InMemoryUnitOfWork } from '../../src/infrastructure/adapters/out/persistence/in-memory-unit-of-work.js';
+import { InMemoryVehiculoRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-vehiculo-repository.js';
 import { InMemoryViajeRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-viaje-repository.js';
+import { datosDeVehiculoDePrueba } from './vehiculos-kit.js';
 
 export const TARIFA_DE_PRUEBA = Object.freeze({
   baseCentavos: 100000,
@@ -42,6 +45,7 @@ export function crearKitViajes({
   const repositorioChoferes = new InMemoryChoferRepository();
   const repositorioCobros = new InMemoryCobroRepository();
   const repositorioClavesIdempotencia = new InMemoryIdempotencyRepository();
+  const repositorioVehiculos = new InMemoryVehiculoRepository();
   const simuladorDeCobro = new SimuladorDeCobroEnMemoria();
   const unidadDeTrabajo = new InMemoryUnitOfWork({
     participantes: [
@@ -49,6 +53,7 @@ export function crearKitViajes({
       repositorioViajes,
       repositorioCobros,
       repositorioClavesIdempotencia,
+      repositorioVehiculos,
     ],
   });
   const generadorIds = new InMemoryIdGenerator();
@@ -57,6 +62,7 @@ export function crearKitViajes({
     reloj,
     repositorioViajes,
     repositorioChoferes,
+    repositorioVehiculos,
     repositorioCobros,
     repositorioClavesIdempotencia,
     simuladorDeCobro,
@@ -107,8 +113,20 @@ export function crearKitViajes({
     }),
     habilitarChofer: crearHabilitarChofer({
       repositorioChoferes,
+      repositorioVehiculos,
       unidadDeTrabajo,
     }),
+  };
+
+  kit.crearVehiculo = async (choferId) => {
+    const vehiculo = new Vehiculo({
+      id: generadorIds.generar(),
+      choferId,
+      ...datosDeVehiculoDePrueba(),
+    });
+
+    await repositorioVehiculos.guardar(vehiculo);
+    return vehiculo;
   };
 
   kit.crearPasajero = () => generadorIds.generar();
