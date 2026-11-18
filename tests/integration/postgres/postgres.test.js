@@ -7,6 +7,7 @@ import { aplicarMigraciones } from '../../../scripts/migrate.js';
 import { composeApplication } from '../../../src/composition-root.js';
 import { ErrorDeDominio } from '../../../src/domain/errors/error-de-dominio.js';
 import { ROLES, Usuario } from '../../../src/domain/entities/usuario.js';
+import { Vehiculo } from '../../../src/domain/entities/vehiculo.js';
 import { loadEnv } from '../../../src/infrastructure/config/env.js';
 import { detenerServidor, iniciarServidor } from '../../helpers/http-server.js';
 import { crearKitPostgres } from '../../helpers/postgres-kit.js';
@@ -131,7 +132,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
 
     assert.deepEqual(
       tablas.rows.map((fila) => fila.table_name),
-      ['choferes', 'claves_idempotencia', 'cobros_simulados', 'usuarios', 'viajes'],
+      ['choferes', 'claves_idempotencia', 'cobros_simulados', 'usuarios', 'vehiculos', 'viajes'],
     );
 
     const indices = await kit.baseDeDatos.query(
@@ -199,6 +200,49 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
 
     const duplicada = await kit.repositorioClavesIdempotencia.crear(registro);
     assert.equal(duplicada, false);
+  });
+
+  test('el repositorio de vehículos guarda, reemplaza y rechaza patentes duplicadas', async () => {
+    const { usuario: chofer } = await kit.crearChofer();
+    const { usuario: otroChofer } = await kit.crearChofer();
+
+    const vehiculo = new Vehiculo({
+      id: randomUUID(),
+      choferId: chofer.id,
+      patente: 'AB123CD',
+      marca: 'Toyota',
+      modelo: 'Etios',
+      anio: 2021,
+    });
+    await kit.repositorioVehiculos.guardar(vehiculo);
+
+    const leido = await kit.repositorioVehiculos.buscarPorChoferId(chofer.id);
+    assert.deepEqual(leido.aVistaPublica(), vehiculo.aVistaPublica());
+
+    // Guardar otra vez para el mismo chofer reemplaza los datos y conserva el id.
+    await kit.repositorioVehiculos.guardar(
+      vehiculo.conDatos({ patente: 'ABC123', marca: 'Fiat', modelo: 'Cronos' }),
+    );
+    const editado = await kit.repositorioVehiculos.buscarPorChoferId(chofer.id);
+    assert.equal(editado.id, vehiculo.id);
+    assert.equal(editado.patente, 'ABC123');
+    assert.equal(editado.anio, null);
+
+    await assert.rejects(
+      () =>
+        kit.repositorioVehiculos.guardar(
+          new Vehiculo({
+            id: randomUUID(),
+            choferId: otroChofer.id,
+            patente: 'ABC123',
+            marca: 'Ford',
+            modelo: 'Ka',
+          }),
+        ),
+      (error) => error.codigo === 'PATENTE_YA_REGISTRADA',
+    );
+
+    assert.equal(await kit.repositorioVehiculos.buscarPorChoferId(otroChofer.id), null);
   });
 
   test('las restricciones de la base rechazan datos incoherentes y duplicados', async () => {

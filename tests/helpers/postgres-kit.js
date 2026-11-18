@@ -16,6 +16,7 @@ import { PostgresDatabase } from '../../src/infrastructure/adapters/out/persiste
 import { PostgresIdempotencyRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-idempotency-repository.js';
 import { PostgresUnitOfWork } from '../../src/infrastructure/adapters/out/persistence/postgres-unit-of-work.js';
 import { PostgresUserRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-user-repository.js';
+import { PostgresVehiculoRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-vehiculo-repository.js';
 import { PostgresViajeRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-viaje-repository.js';
 import { DESTINO, ORIGEN, TARIFA_DE_PRUEBA } from './viajes-kit.js';
 
@@ -44,6 +45,7 @@ export function crearKitPostgres({ max = 20 } = {}) {
   const repositorioChoferes = new PostgresChoferRepository({ baseDeDatos });
   const repositorioViajes = new PostgresViajeRepository({ baseDeDatos });
   const repositorioCobros = new PostgresCobroRepository({ baseDeDatos });
+  const repositorioVehiculos = new PostgresVehiculoRepository({ baseDeDatos });
   const repositorioClavesIdempotencia = new PostgresIdempotencyRepository({ baseDeDatos });
   const simuladorDeCobro = new SimuladorDeCobroDeterminista();
   const unidadDeTrabajo = new PostgresUnitOfWork({ baseDeDatos });
@@ -56,6 +58,7 @@ export function crearKitPostgres({ max = 20 } = {}) {
     repositorioChoferes,
     repositorioViajes,
     repositorioCobros,
+    repositorioVehiculos,
     repositorioClavesIdempotencia,
     simuladorDeCobro,
     unidadDeTrabajo,
@@ -155,7 +158,7 @@ export function crearKitPostgres({ max = 20 } = {}) {
 
     async limpiar() {
       await baseDeDatos.query(
-        'TRUNCATE TABLE cobros_simulados, claves_idempotencia, choferes, viajes, usuarios CASCADE',
+        'TRUNCATE TABLE vehiculos, cobros_simulados, claves_idempotencia, choferes, viajes, usuarios CASCADE',
       );
     },
 
