@@ -14,6 +14,7 @@ import { PostgresChoferRepository } from '../../src/infrastructure/adapters/out/
 import { PostgresCobroRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-cobro-repository.js';
 import { PostgresDatabase } from '../../src/infrastructure/adapters/out/persistence/postgres-database.js';
 import { PostgresIdempotencyRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-idempotency-repository.js';
+import { PostgresUbicacionRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-ubicacion-repository.js';
 import { PostgresUnitOfWork } from '../../src/infrastructure/adapters/out/persistence/postgres-unit-of-work.js';
 import { PostgresUserRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-user-repository.js';
 import { PostgresVehiculoRepository } from '../../src/infrastructure/adapters/out/persistence/postgres-vehiculo-repository.js';
@@ -46,6 +47,7 @@ export function crearKitPostgres({ max = 20 } = {}) {
   const repositorioViajes = new PostgresViajeRepository({ baseDeDatos });
   const repositorioCobros = new PostgresCobroRepository({ baseDeDatos });
   const repositorioVehiculos = new PostgresVehiculoRepository({ baseDeDatos });
+  const repositorioUbicaciones = new PostgresUbicacionRepository({ baseDeDatos });
   const repositorioClavesIdempotencia = new PostgresIdempotencyRepository({ baseDeDatos });
   const simuladorDeCobro = new SimuladorDeCobroDeterminista();
   const unidadDeTrabajo = new PostgresUnitOfWork({ baseDeDatos });
@@ -59,6 +61,7 @@ export function crearKitPostgres({ max = 20 } = {}) {
     repositorioViajes,
     repositorioCobros,
     repositorioVehiculos,
+    repositorioUbicaciones,
     repositorioClavesIdempotencia,
     simuladorDeCobro,
     unidadDeTrabajo,
@@ -158,7 +161,7 @@ export function crearKitPostgres({ max = 20 } = {}) {
 
     async limpiar() {
       await baseDeDatos.query(
-        'TRUNCATE TABLE vehiculos, cobros_simulados, claves_idempotencia, choferes, viajes, usuarios CASCADE',
+        'TRUNCATE TABLE ubicaciones_vigentes, vehiculos, cobros_simulados, claves_idempotencia, choferes, viajes, usuarios CASCADE',
       );
     },
 
