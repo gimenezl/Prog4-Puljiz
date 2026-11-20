@@ -3,20 +3,30 @@ import { FixedClock } from './infrastructure/adapters/out/clock/fixed-clock.js';
 import { SystemClock } from './infrastructure/adapters/out/clock/system-clock.js';
 import { CryptoIdGenerator } from './infrastructure/adapters/out/ids/crypto-id-generator.js';
 import { InMemoryIdGenerator } from './infrastructure/adapters/out/ids/in-memory-id-generator.js';
+import { MedidorDeDemanda } from './infrastructure/adapters/out/demanda/medidor-de-demanda.js';
+import { EstimadorDeRecorridoHaversine } from './infrastructure/adapters/out/recorrido/estimador-de-recorrido.js';
 import { InMemoryChoferRepository } from './infrastructure/adapters/out/persistence/in-memory-chofer-repository.js';
 import { InMemoryCobroRepository } from './infrastructure/adapters/out/persistence/in-memory-cobro-repository.js';
+import { InMemoryCotizacionRepository } from './infrastructure/adapters/out/persistence/in-memory-cotizacion-repository.js';
 import { InMemoryDatabase } from './infrastructure/adapters/out/persistence/in-memory-database.js';
 import { InMemoryIdempotencyRepository } from './infrastructure/adapters/out/persistence/in-memory-idempotency-repository.js';
+import { InMemoryReglaRepository } from './infrastructure/adapters/out/persistence/in-memory-regla-repository.js';
+import { InMemoryTarifaRepository } from './infrastructure/adapters/out/persistence/in-memory-tarifa-repository.js';
 import { InMemoryUbicacionRepository } from './infrastructure/adapters/out/persistence/in-memory-ubicacion-repository.js';
+import { InMemoryZonaRepository } from './infrastructure/adapters/out/persistence/in-memory-zona-repository.js';
 import { InMemoryUnitOfWork } from './infrastructure/adapters/out/persistence/in-memory-unit-of-work.js';
 import { InMemoryUserRepository } from './infrastructure/adapters/out/persistence/in-memory-user-repository.js';
 import { InMemoryVehiculoRepository } from './infrastructure/adapters/out/persistence/in-memory-vehiculo-repository.js';
 import { InMemoryViajeRepository } from './infrastructure/adapters/out/persistence/in-memory-viaje-repository.js';
 import { PostgresChoferRepository } from './infrastructure/adapters/out/persistence/postgres-chofer-repository.js';
 import { PostgresCobroRepository } from './infrastructure/adapters/out/persistence/postgres-cobro-repository.js';
+import { PostgresCotizacionRepository } from './infrastructure/adapters/out/persistence/postgres-cotizacion-repository.js';
 import { PostgresDatabase } from './infrastructure/adapters/out/persistence/postgres-database.js';
 import { PostgresIdempotencyRepository } from './infrastructure/adapters/out/persistence/postgres-idempotency-repository.js';
+import { PostgresReglaRepository } from './infrastructure/adapters/out/persistence/postgres-regla-repository.js';
+import { PostgresTarifaRepository } from './infrastructure/adapters/out/persistence/postgres-tarifa-repository.js';
 import { PostgresUbicacionRepository } from './infrastructure/adapters/out/persistence/postgres-ubicacion-repository.js';
+import { PostgresZonaRepository } from './infrastructure/adapters/out/persistence/postgres-zona-repository.js';
 import { PostgresUnitOfWork } from './infrastructure/adapters/out/persistence/postgres-unit-of-work.js';
 import { PostgresUserRepository } from './infrastructure/adapters/out/persistence/postgres-user-repository.js';
 import { PostgresVehiculoRepository } from './infrastructure/adapters/out/persistence/postgres-vehiculo-repository.js';
@@ -29,6 +39,25 @@ import { InMemoryTokenService } from './infrastructure/adapters/out/security/in-
 import { JwtTokenService } from './infrastructure/adapters/out/security/jwt-token-service.js';
 import { createReadinessCheck } from './infrastructure/health/readiness-check.js';
 import { createLogger } from './infrastructure/logging/logger.js';
+import {
+  crearActualizarZona,
+  crearCrearRegla,
+  crearCrearTarifa,
+  crearCrearZona,
+  crearEditarRegla,
+  crearEditarTarifa,
+  crearListarReglas,
+  crearListarTarifas,
+  crearListarZonas,
+  crearPublicarRegla,
+  crearPublicarTarifa,
+} from './application/use-cases/configuracion/configuracion-administrativa.js';
+import { crearConfirmarCotizacion } from './application/use-cases/cotizaciones/confirmar-cotizacion.js';
+import {
+  crearListarCotizaciones,
+  crearObtenerCotizacion,
+} from './application/use-cases/cotizaciones/consultar-cotizaciones.js';
+import { crearCotizar } from './application/use-cases/cotizaciones/cotizar.js';
 import { crearActualizarPerfilUsuario } from './application/use-cases/auth/actualizar-perfil-usuario.js';
 import { crearIniciarSesion } from './application/use-cases/auth/iniciar-sesion.js';
 import { crearObtenerPerfilUsuario } from './application/use-cases/auth/obtener-perfil-usuario.js';
@@ -99,6 +128,22 @@ export function composeApplication(entorno) {
     ? new InMemoryUbicacionRepository()
     : new PostgresUbicacionRepository({ baseDeDatos });
 
+  const repositorioZonas = usaAdaptadoresFalsos
+    ? new InMemoryZonaRepository()
+    : new PostgresZonaRepository({ baseDeDatos });
+
+  const repositorioTarifas = usaAdaptadoresFalsos
+    ? new InMemoryTarifaRepository()
+    : new PostgresTarifaRepository({ baseDeDatos });
+
+  const repositorioReglas = usaAdaptadoresFalsos
+    ? new InMemoryReglaRepository()
+    : new PostgresReglaRepository({ baseDeDatos });
+
+  const repositorioCotizaciones = usaAdaptadoresFalsos
+    ? new InMemoryCotizacionRepository()
+    : new PostgresCotizacionRepository({ baseDeDatos });
+
   const unidadDeTrabajo = usaAdaptadoresFalsos
     ? new InMemoryUnitOfWork({
         participantes: [
@@ -109,6 +154,10 @@ export function composeApplication(entorno) {
           repositorioCobros,
           repositorioVehiculos,
           repositorioUbicaciones,
+          repositorioZonas,
+          repositorioTarifas,
+          repositorioReglas,
+          repositorioCotizaciones,
         ],
       })
     : new PostgresUnitOfWork({ baseDeDatos });
@@ -201,6 +250,70 @@ export function composeApplication(entorno) {
     vigenciaUbicacionMs: entorno.UBICACION_VIGENCIA_MS,
   });
 
+  const medidorDeDemanda = new MedidorDeDemanda({
+    repositorioViajes,
+    repositorioChoferes,
+    repositorioUbicaciones,
+    ventanaMs: entorno.DEMANDA_VENTANA_MS,
+    ubicacionVigenciaMs: entorno.UBICACION_VIGENCIA_MS,
+  });
+  const estimadorDeRecorrido = new EstimadorDeRecorridoHaversine({
+    velocidadEstimadaKmh: entorno.VELOCIDAD_ESTIMADA_KMH,
+  });
+
+  const crearZona = crearCrearZona({
+    repositorioZonas,
+    unidadDeTrabajo,
+    reloj,
+    generadorIds,
+  });
+  const actualizarZona = crearActualizarZona({ repositorioZonas, unidadDeTrabajo });
+  const listarZonas = crearListarZonas({ repositorioZonas });
+
+  const crearTarifa = crearCrearTarifa({
+    repositorioTarifas,
+    unidadDeTrabajo,
+    reloj,
+    generadorIds,
+  });
+  const editarTarifa = crearEditarTarifa({ repositorioTarifas, unidadDeTrabajo });
+  const publicarTarifa = crearPublicarTarifa({ repositorioTarifas, unidadDeTrabajo, reloj });
+  const listarTarifas = crearListarTarifas({ repositorioTarifas });
+
+  const crearRegla = crearCrearRegla({
+    repositorioReglas,
+    unidadDeTrabajo,
+    reloj,
+    generadorIds,
+  });
+  const editarRegla = crearEditarRegla({ repositorioReglas, unidadDeTrabajo });
+  const publicarRegla = crearPublicarRegla({ repositorioReglas, unidadDeTrabajo, reloj });
+  const listarReglas = crearListarReglas({ repositorioReglas });
+
+  const cotizar = crearCotizar({
+    repositorioZonas,
+    repositorioTarifas,
+    repositorioReglas,
+    repositorioCotizaciones,
+    medidorDeDemanda,
+    estimadorDeRecorrido,
+    unidadDeTrabajo,
+    reloj,
+    generadorIds,
+    vigenciaMs: entorno.COTIZACION_VIGENCIA_MS,
+  });
+  const confirmarCotizacion = crearConfirmarCotizacion({
+    repositorioCotizaciones,
+    repositorioViajes,
+    repositorioClavesIdempotencia,
+    unidadDeTrabajo,
+    reloj,
+    generadorIds,
+    ttlIdempotenciaMs: entorno.IDEMPOTENCIA_TTL_MS,
+  });
+  const obtenerCotizacion = crearObtenerCotizacion({ repositorioCotizaciones, reloj });
+  const listarCotizaciones = crearListarCotizaciones({ repositorioCotizaciones, reloj });
+
   const obtenerPerfilChofer = crearObtenerPerfilChofer({ repositorioChoferes });
   const actualizarDisponibilidadChofer = crearActualizarDisponibilidadChofer({
     repositorioChoferes,
@@ -233,6 +346,10 @@ export function composeApplication(entorno) {
       cobros: () => repositorioCobros.verificarDisponibilidad(),
       vehiculos: () => repositorioVehiculos.verificarDisponibilidad(),
       ubicaciones: () => repositorioUbicaciones.verificarDisponibilidad(),
+      zonas: () => repositorioZonas.verificarDisponibilidad(),
+      tarifas: () => repositorioTarifas.verificarDisponibilidad(),
+      reglas: () => repositorioReglas.verificarDisponibilidad(),
+      cotizaciones: () => repositorioCotizaciones.verificarDisponibilidad(),
       idempotencia: () => repositorioClavesIdempotencia.verificarDisponibilidad(),
       reloj: () => reloj.ahora() instanceof Date,
     },
@@ -270,6 +387,25 @@ export function composeApplication(entorno) {
       guardarVehiculo,
       actualizarUbicacionChofer,
     },
+    cotizaciones: {
+      cotizar,
+      confirmarCotizacion,
+      obtenerCotizacion,
+      listarCotizaciones,
+    },
+    configuracion: {
+      crearZona,
+      actualizarZona,
+      listarZonas,
+      crearTarifa,
+      editarTarifa,
+      publicarTarifa,
+      listarTarifas,
+      crearRegla,
+      editarRegla,
+      publicarRegla,
+      listarReglas,
+    },
     corsOrigin: entorno.CORS_ORIGIN,
     bodyLimit: entorno.BODY_LIMIT,
     rateLimit: {
@@ -304,6 +440,10 @@ export function composeApplication(entorno) {
     repositorioCobros,
     repositorioVehiculos,
     repositorioUbicaciones,
+    repositorioZonas,
+    repositorioTarifas,
+    repositorioReglas,
+    repositorioCotizaciones,
     simuladorDeCobro,
     unidadDeTrabajo,
     hasherContrasenas,

@@ -33,6 +33,9 @@ Migraciones actuales:
 - `009_tarifas.sql`: tarifas globales versionadas con importes en centavos.
 - `010_reglas_multiplicador.sql`: reglas de multiplicador versionadas con
   umbrales y escala fijos (RF-16).
+- `011_cotizaciones.sql`: cotizaciones inmutables con foto del cálculo, columnas
+  `cotizacion_id` y `multiplicador_fijado` en `viajes`, y protección contra
+  borrado de cotizaciones confirmadas (ADR-0005).
 
 ## Base de pruebas
 

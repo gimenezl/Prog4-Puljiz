@@ -1,8 +1,13 @@
 import { composeApplication } from '../src/composition-root.js';
 import { Chofer } from '../src/domain/entities/chofer.js';
+import { ReglaDeMultiplicador } from '../src/domain/entities/regla-de-multiplicador.js';
+import { Tarifa } from '../src/domain/entities/tarifa.js';
+import { UbicacionChofer } from '../src/domain/entities/ubicacion-chofer.js';
 import { ROLES, Usuario } from '../src/domain/entities/usuario.js';
 import { Vehiculo } from '../src/domain/entities/vehiculo.js';
+import { ZonaDeDemanda } from '../src/domain/entities/zona-de-demanda.js';
 import { validarContrasena } from '../src/domain/value-objects/contrasena.js';
+import { PuntoGeografico } from '../src/domain/value-objects/punto-geografico.js';
 import { loadEnv } from '../src/infrastructure/config/env.js';
 
 const CUENTAS = Object.freeze([
@@ -124,6 +129,117 @@ async function asegurarCuenta(composicion, cuenta) {
   return usuario;
 }
 
+const ZONA_SEED = {
+  nombre: 'Centro',
+  criterio: {
+    tipo: 'POLIGONO',
+    puntos: [
+      { lat: -34.62, lng: -58.4 },
+      { lat: -34.59, lng: -58.4 },
+      { lat: -34.59, lng: -58.36 },
+      { lat: -34.62, lng: -58.36 },
+    ],
+  },
+};
+
+async function asegurarConfiguracion(composicion) {
+  const ahora = composicion.reloj.ahora();
+  const administrador = await composicion.repositorioUsuarios.buscarPorEmail('admin@prog4.test');
+
+  if (!administrador) throw new Error('No existe la cuenta administradora del seed.');
+
+  if (!(await composicion.repositorioTarifas.vigente(ahora))) {
+    const borrador = new Tarifa({
+      id: composicion.generadorIds.generar(),
+      baseCentavos: 100000,
+      porKmCentavos: 50000,
+      porMinutoCentavos: 10000,
+      precioMaximoCentavos: 1000000,
+      creadaEn: ahora,
+    });
+
+    await composicion.unidadDeTrabajo.ejecutar(async (tx) => {
+      await composicion.repositorioTarifas.crear(borrador, tx);
+      await composicion.repositorioTarifas.publicar(
+        borrador.publicar({
+          vigenteDesde: ahora,
+          publicadaPorId: administrador.id,
+          publicadaEn: ahora,
+        }),
+        tx,
+      );
+    });
+
+    informar('tarifa inicial publicada (versión 1).');
+  }
+
+  if (!(await composicion.repositorioReglas.vigente(ahora))) {
+    const borrador = new ReglaDeMultiplicador({
+      id: composicion.generadorIds.generar(),
+      umbralInferior: '0.5',
+      umbralSuperior: '3',
+      multiplicadorMinimo: '1',
+      multiplicadorMaximo: '2',
+      escalaMultiplicador: 2,
+      creadaEn: ahora,
+    });
+
+    await composicion.unidadDeTrabajo.ejecutar(async (tx) => {
+      await composicion.repositorioReglas.crear(borrador, tx);
+      await composicion.repositorioReglas.publicar(
+        borrador.publicar({
+          vigenteDesde: ahora,
+          motivo: 'Regla inicial de prueba del seed.',
+          publicadaPorId: administrador.id,
+          publicadaEn: ahora,
+        }),
+        tx,
+      );
+    });
+
+    informar('regla de multiplicador inicial publicada (versión 1).');
+  }
+
+  if ((await composicion.repositorioZonas.listar({ activa: true })).length === 0) {
+    const zona = new ZonaDeDemanda({
+      id: composicion.generadorIds.generar(),
+      nombre: ZONA_SEED.nombre,
+      criterio: ZONA_SEED.criterio,
+      activa: true,
+      creadaEn: ahora,
+    });
+
+    await composicion.unidadDeTrabajo.ejecutar(async (tx) => {
+      await composicion.repositorioZonas.crear(zona, tx);
+    });
+
+    informar(`zona ${zona.nombre} creada.`);
+  }
+}
+
+async function asegurarUbicacionesChoferes(composicion) {
+  const ahora = composicion.reloj.ahora();
+  const choferes = await composicion.repositorioChoferes.listarElegibles();
+
+  for (const [indice, chofer] of choferes.entries()) {
+    const existente = await composicion.repositorioUbicaciones.buscarPorChoferId(chofer.usuarioId);
+
+    if (existente) continue;
+
+    const ubicacion = new UbicacionChofer({
+      choferId: chofer.usuarioId,
+      punto: new PuntoGeografico({
+        lat: -34.6037 + indice * 0.001,
+        lng: -58.3816 + indice * 0.001,
+      }),
+      actualizadaEn: ahora,
+    });
+
+    await composicion.repositorioUbicaciones.guardar(ubicacion);
+    informar(`ubicación inicial registrada para ${chofer.usuarioId}.`);
+  }
+}
+
 async function principal() {
   const entorno = loadEnv();
 
@@ -141,6 +257,9 @@ async function principal() {
         await asegurarVehiculo(composicion, usuario, cuenta.vehiculo);
       }
     }
+
+    await asegurarConfiguracion(composicion);
+    await asegurarUbicacionesChoferes(composicion);
 
     informar('Datos de prueba disponibles:');
     for (const cuenta of CUENTAS) {

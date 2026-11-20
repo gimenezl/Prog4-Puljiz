@@ -57,6 +57,18 @@ export class PostgresChoferRepository {
     }
   }
 
+  async listarElegibles(ejecutor) {
+    const { rows } = await this.#ejecutor(ejecutor).query(
+      `SELECT ${CAMPOS}
+         FROM choferes
+        WHERE habilitado
+          AND disponible
+          AND viaje_activo_id IS NULL`,
+    );
+
+    return rows.map(mapearChofer);
+  }
+
   async verificarDisponibilidad() {
     try {
       await this.#baseDeDatos.query('SELECT 1 FROM choferes LIMIT 1');

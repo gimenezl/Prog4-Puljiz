@@ -137,6 +137,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
         'choferes',
         'claves_idempotencia',
         'cobros_simulados',
+        'cotizaciones',
         'reglas_multiplicador',
         'tarifas',
         'ubicaciones_vigentes',
@@ -164,6 +165,9 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       'tarifas_publicadas_vigencia_idx',
       'reglas_multiplicador_version_publicada_idx',
       'reglas_multiplicador_publicadas_vigencia_idx',
+      'cotizaciones_pasajero_id_idx',
+      'cotizaciones_zona_calculada_idx',
+      'cotizaciones_estado_vence_idx',
     ]) {
       assert.equal(nombres.has(indice), true, `falta el índice ${indice}`);
     }

@@ -12,7 +12,7 @@ y el anterior pasa a estado «Reemplazado por ADR-XXXX».
 | [0002](0002-postgresql-con-sql-parametrizado-sin-orm.md)       | PostgreSQL con SQL parametrizado y sin ORM                              | Aceptado  |
 | [0003](0003-jwt-y-bcrypt-para-autenticacion.md)                | JWT firmado y bcrypt para autenticación; permisos por rol y por recurso | Aceptado  |
 | [0004](0004-bloqueo-de-filas-para-asignacion-y-cancelacion.md) | Bloqueo de filas en orden fijo para asignar y cancelar viajes           | Aceptado  |
-| [0005](0005-cotizacion-inmutable-para-precio-dinamico.md)      | Cotización inmutable y confirmación condicional para el precio dinámico | Propuesto |
+| [0005](0005-cotizacion-inmutable-para-precio-dinamico.md)      | Cotización inmutable y confirmación condicional para el precio dinámico | Aceptado  |
 | [0006](0006-postgis-para-busqueda-geografica.md)               | PostGIS con índice espacial para buscar choferes cercanos               | Propuesto |
 | [0007](0007-servicio-python-integrado-por-http.md)             | Reportes en un servicio Python separado, integrado por HTTP             | Aceptado  |
 

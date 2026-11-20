@@ -11,6 +11,18 @@ export const ESTADOS_VIAJE = Object.freeze({
   FINALIZADO: 'FINALIZADO',
 });
 
+/**
+ * Estados que representan demanda activa para el multiplicador (RF-23).
+ * `CHOFER_EN_CAMINO` y `EN_CURSO` llegan en la tarjeta E3; la migración 002 ya
+ * los admite, y el conteo los incluye aunque la API todavía no los alcance.
+ */
+export const ESTADOS_DEMANDA_ACTIVA = Object.freeze([
+  ESTADOS_VIAJE.SOLICITADO,
+  ESTADOS_VIAJE.ASIGNADO,
+  'CHOFER_EN_CAMINO',
+  'EN_CURSO',
+]);
+
 const ESTADOS_VALIDOS = new Set(Object.values(ESTADOS_VIAJE));
 const ESTADOS_CON_CHOFER = new Set([
   ESTADOS_VIAJE.ASIGNADO,
@@ -80,6 +92,8 @@ export class Viaje {
   #destino;
   #distanciaEstimadaM;
   #precioFijadoCentavos;
+  #cotizacionId;
+  #multiplicadorFijado;
   #choferId;
   #estado;
   #solicitadoEn;
@@ -95,6 +109,8 @@ export class Viaje {
     destino,
     distanciaEstimadaM,
     precioFijadoCentavos,
+    cotizacionId = null,
+    multiplicadorFijado = '1.0000',
     choferId = null,
     estado = ESTADOS_VIAJE.SOLICITADO,
     solicitadoEn,
@@ -131,6 +147,19 @@ export class Viaje {
       precioFijadoCentavos,
       'El precio fijado no es válido.',
     );
+
+    if (
+      typeof multiplicadorFijado !== 'string' ||
+      !/^\d+(\.\d{1,4})?$/.test(multiplicadorFijado.trim())
+    ) {
+      throw new ErrorDeDominio('DATOS_INVALIDOS', 'El multiplicador fijado no es válido.');
+    }
+
+    this.#cotizacionId =
+      cotizacionId === null
+        ? null
+        : validarIdentificador(cotizacionId, 'El identificador de la cotización no es válido.');
+    this.#multiplicadorFijado = multiplicadorFijado.trim();
 
     if (!ESTADOS_VALIDOS.has(estado)) {
       throw new ErrorDeDominio('DATOS_INVALIDOS', 'El estado del viaje no es válido.');
@@ -186,6 +215,14 @@ export class Viaje {
 
   get precioFijadoCentavos() {
     return this.#precioFijadoCentavos;
+  }
+
+  get cotizacionId() {
+    return this.#cotizacionId;
+  }
+
+  get multiplicadorFijado() {
+    return this.#multiplicadorFijado;
   }
 
   get choferId() {
@@ -244,6 +281,8 @@ export class Viaje {
       destino: this.#destino,
       distanciaEstimadaM: this.#distanciaEstimadaM,
       precioFijadoCentavos: this.#precioFijadoCentavos,
+      cotizacionId: this.#cotizacionId,
+      multiplicadorFijado: this.#multiplicadorFijado,
       choferId: validarIdentificador(choferId, 'El identificador del chofer no es válido.'),
       estado: ESTADOS_VIAJE.ASIGNADO,
       solicitadoEn: this.#solicitadoEn,
@@ -264,6 +303,8 @@ export class Viaje {
       destino: this.#destino,
       distanciaEstimadaM: this.#distanciaEstimadaM,
       precioFijadoCentavos: this.#precioFijadoCentavos,
+      cotizacionId: this.#cotizacionId,
+      multiplicadorFijado: this.#multiplicadorFijado,
       choferId: this.#choferId,
       estado: ESTADOS_VIAJE.FINALIZADO,
       solicitadoEn: this.#solicitadoEn,
@@ -288,6 +329,8 @@ export class Viaje {
       destino: this.#destino,
       distanciaEstimadaM: this.#distanciaEstimadaM,
       precioFijadoCentavos: this.#precioFijadoCentavos,
+      cotizacionId: this.#cotizacionId,
+      multiplicadorFijado: this.#multiplicadorFijado,
       choferId: this.#choferId,
       estado: ESTADOS_VIAJE.CANCELADO_POR_PASAJERO,
       solicitadoEn: this.#solicitadoEn,
@@ -306,6 +349,8 @@ export class Viaje {
       destino: this.#destino.aJSON(),
       distanciaEstimadaM: this.#distanciaEstimadaM,
       precioFijadoCentavos: this.#precioFijadoCentavos,
+      cotizacionId: this.#cotizacionId,
+      multiplicadorFijado: this.#multiplicadorFijado,
       choferId: this.#choferId,
       estado: this.#estado,
       solicitadoEn: this.#solicitadoEn.toISOString(),

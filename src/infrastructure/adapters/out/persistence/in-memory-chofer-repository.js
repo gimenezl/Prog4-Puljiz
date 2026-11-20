@@ -23,6 +23,10 @@ export class InMemoryChoferRepository {
     return this.#porUsuarioId.get(usuarioId) ?? null;
   }
 
+  async listarElegibles(_ejecutor) {
+    return [...this.#porUsuarioId.values()].filter((chofer) => chofer.estaElegible());
+  }
+
   async actualizar(chofer, _ejecutor) {
     if (!this.#porUsuarioId.has(chofer.usuarioId)) {
       throw new ErrorDeDominio('NO_ENCONTRADO', 'El perfil de chofer no existe.');
