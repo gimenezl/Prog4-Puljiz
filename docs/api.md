@@ -86,8 +86,10 @@ Esta tabla coincide exactamente con `ESTADOS_HTTP_POR_CODIGO` en `src/infrastruc
 | `TRANSICION_INVALIDA` | 409 | El estado actual del viaje no admite la operación (por ejemplo, cancelar un viaje ya cancelado o finalizar uno que no está `ASIGNADO`), o el viaje ya tiene un cobro registrado. |
 | `VIAJE_NO_DISPONIBLE` | 409 | Se intenta aceptar un viaje que ya no está `SOLICITADO` (lo tomó otro chofer o se canceló). |
 | `OFERTA_NO_PENDIENTE` | 409 | *(previsto, E3)* La oferta ya fue aceptada, rechazada o anulada. |
-| `CHOFER_NO_ELEGIBLE` | 409 | El chofer no tiene perfil, no está habilitado o no está disponible (al listar o aceptar viajes, o al declararse disponible sin estar habilitado). |
+| `CHOFER_NO_ELEGIBLE` | 409 | El chofer no tiene perfil, no está habilitado, no está disponible o no tiene una ubicación reciente (al listar o aceptar viajes); también al declararse disponible o informar ubicación sin estar habilitado. |
 | `CHOFER_OCUPADO` | 409 | El chofer ya tiene un viaje activo. |
+| `PATENTE_YA_REGISTRADA` | 409 | La patente ya pertenece al vehículo de otro chofer. |
+| `CHOFER_SIN_VEHICULO` | 409 | Se intenta habilitar a un chofer que no registró un vehículo. |
 | `COTIZACION_YA_CONFIRMADA` | 409 | *(previsto, E2)* La cotización ya generó un viaje. |
 | `CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO` | 409 | Se reutilizó una `Idempotency-Key` vigente con un cuerpo distinto (§3). |
 | `CLAVE_DE_IDEMPOTENCIA_REQUERIDA` | 400 | Falta la cabecera `Idempotency-Key` (o está vacía) en una operación que la exige. |
@@ -120,7 +122,6 @@ Todavía **no** están en `error-mapping.js`. La tarjeta que los use debe agrega
 | `CONFIGURACION_INCOMPLETA` | 503 | No hay regla de multiplicador o tarifa vigente para cotizar (`docs/modelo.md` §4.6). | E2 · RF-23 + RF-16 |
 | `VERSION_YA_PUBLICADA` | 409 | Se intenta editar o volver a publicar una regla o tarifa ya publicada (I12). | E2 · RF-23 + RF-16 |
 | `ZONAS_SUPERPUESTAS` | 409 | Una zona activa nueva o modificada se solapa con otra (I16). | E2 · RF-23 + RF-16 |
-| `PATENTE_YA_REGISTRADA` | 409 | La patente ya pertenece a otro vehículo. | E2 · RF-02 + RF-03 |
 | `UBICACION_NO_DISPONIBLE` | 404 | Se consulta la ubicación de un viaje sin ubicación vigente del chofer. | E4 · tiempo real |
 | `SERVICIO_NO_DISPONIBLE` | 503 | El servicio Python no respondió dentro del tiempo máximo (ADR-0007). | E4 · parte Python |
 
@@ -378,7 +379,7 @@ El perfil operativo de chofer tiene esta forma en todas las respuestas:
 #### `PATCH /choferes/{usuarioId}/habilitacion`
 
 - **Roles:** `ADMINISTRADOR`.
-- **Descripción:** habilita o inhabilita a un chofer. Al inhabilitar, `disponible` pasa a `false`; si tenía un viaje activo, lo conserva (Q12).
+- **Descripción:** habilita o inhabilita a un chofer. Para habilitar, el chofer tiene que haber registrado un vehículo (Q11); inhabilitar se permite siempre. Al inhabilitar, `disponible` pasa a `false`; si tenía un viaje activo, lo conserva (Q12).
 - **Parámetros:** `usuarioId` (UUID del usuario chofer).
 - **Cuerpo:**
 
@@ -407,6 +408,93 @@ El perfil operativo de chofer tiene esta forma en todas las respuestas:
 | 400 | `DATOS_INVALIDOS` | `usuarioId` no es UUID, o `habilitado` no es booleano. |
 | 403 | `NO_AUTORIZADO` | Otro rol → `"No tenés permiso para realizar esta operación."` |
 | 404 | `NO_ENCONTRADO` | El usuario no existe o no es chofer → `"El perfil de chofer no existe."` |
+| 409 | `CHOFER_SIN_VEHICULO` | Habilitar sin vehículo → `"El chofer debe registrar un vehículo antes de ser habilitado."` |
+
+#### `PUT /choferes/yo/vehiculo`
+
+- **Roles:** `CHOFER`. Por recurso: solo el propio vehículo.
+- **Descripción:** registra el vehículo del chofer o reemplaza sus datos. Un chofer tiene a lo sumo un vehículo y la patente es única en el sistema. La patente se normaliza (sin espacios ni guiones, en mayúsculas) y acepta los formatos `ABC123` y `AB123CD`. El vehículo no se puede borrar, solo editar.
+- **Cuerpo:**
+
+| Campo | Tipo | Reglas |
+|---|---|---|
+| `patente` | texto | Obligatoria. Formato `ABC123` o `AB123CD`. |
+| `marca`, `modelo` | texto | Obligatorios, 1 a 50 caracteres. |
+| `anio` | entero | Opcional, entre 1950 y 2100. |
+| `color` | texto | Opcional, 1 a 50 caracteres. |
+
+```json
+{
+  "patente": "ab 123 cd",
+  "marca": "Toyota",
+  "modelo": "Etios",
+  "anio": 2021,
+  "color": "Gris"
+}
+```
+
+- **Éxito:** `201 Created` si lo registra, `200 OK` si lo edita (conserva el `id`).
+
+```json
+{
+  "vehiculo": {
+    "id": "e2f3a4b5-c6d7-4e8f-9a0b-1c2d3e4f5a60",
+    "choferId": "d7e8f9a0-b1c2-4d3e-8f4a-5b6c7d8e9f06",
+    "patente": "AB123CD",
+    "marca": "Toyota",
+    "modelo": "Etios",
+    "anio": 2021,
+    "color": "Gris"
+  }
+}
+```
+
+- **Errores:**
+
+| HTTP | Código | Ejemplo de causa |
+|---:|---|---|
+| 400 | `DATOS_INVALIDOS` | `patente: "XYZ"` → `"La patente debe tener el formato ABC123 o AB123CD."`; `anio` decimal; campo extra. |
+| 403 | `NO_AUTORIZADO` | Otro rol. |
+| 404 | `NO_ENCONTRADO` | `"El perfil de chofer no existe."` |
+| 409 | `PATENTE_YA_REGISTRADA` | `"La patente ya está registrada en otro vehículo."` |
+
+#### `GET /choferes/yo/vehiculo`
+
+- **Roles:** `CHOFER`.
+- **Éxito:** `200 OK` con `{ "vehiculo": { … } }`, con la forma de `PUT /choferes/yo/vehiculo`.
+- **Errores:** `403 NO_AUTORIZADO` (otro rol), `404 NO_ENCONTRADO` → `"El chofer todavía no registró un vehículo."`
+
+#### `PUT /choferes/yo/ubicacion`
+
+- **Roles:** `CHOFER`, habilitado. Por recurso: solo la propia ubicación.
+- **Descripción:** reemplaza la ubicación vigente del chofer (RF-03). `actualizadaEn` es **la hora del servidor** al recibirla; el cliente no puede enviarla. La ubicación se guarda como `geography(Point, 4326)` con índice GiST (ADR-0006). Un envío que llega atrasado no pisa una ubicación más reciente.
+- **Para qué sirve:** un chofer necesita una ubicación de menos de `UBICACION_VIGENCIA_MS` (60 segundos por defecto) para listar y aceptar viajes. La app del chofer debe enviarla periódicamente.
+- **Cuerpo:**
+
+```json
+{ "lat": -34.6037, "lng": -58.3816 }
+```
+
+- **Éxito:** `200 OK`
+
+```json
+{
+  "ubicacion": {
+    "choferId": "7c9e4b21-2d3f-4a8b-b6c5-1e0f9d8a2b02",
+    "punto": { "lat": -34.6037, "lng": -58.3816 },
+    "actualizadaEn": "2026-11-18T23:38:43.838Z"
+  }
+}
+```
+
+- **Errores:**
+
+| HTTP | Código | Ejemplo de causa |
+|---:|---|---|
+| 400 | `DATOS_INVALIDOS` | `lat: 91` → `"La coordenada latitud no es válida."`; coordenada como texto; campo extra como `actualizadaEn`. |
+| 403 | `NO_AUTORIZADO` | Otro rol. |
+| 404 | `NO_ENCONTRADO` | `"El perfil de chofer no existe."` |
+| 409 | `CHOFER_NO_ELEGIBLE` | Inhabilitado → `"Un chofer inhabilitado no puede informar su ubicación."` |
 
 ### 4.4 Viajes (`/viajes`)
 
@@ -476,7 +564,7 @@ Con la tarifa por defecto: `100000 + round(4,777 km × 50000) = 338850`, acotado
 
 #### `GET /viajes/disponibles`
 
-- **Roles:** `CHOFER`. Además, el chofer debe estar **habilitado, disponible y libre**.
+- **Roles:** `CHOFER`. Además, el chofer debe estar **habilitado, disponible, libre y con una ubicación reciente** (`PUT /choferes/yo/ubicacion` hace menos de `UBICACION_VIGENCIA_MS`).
 - **Descripción:** lista hasta 50 viajes `SOLICITADO` (no hay parámetros de paginación ni filtro geográfico). La lista es orientativa: al aceptar se vuelve a validar todo.
 - **Éxito:** `200 OK`
 
@@ -508,6 +596,7 @@ Con la tarifa por defecto: `100000 + round(4,777 km × 50000) = 338850`, acotado
 |---:|---|---|
 | 403 | `NO_AUTORIZADO` | Otro rol. |
 | 409 | `CHOFER_NO_ELEGIBLE` | No disponible, inhabilitado u ocupado → `"El chofer no está habilitado y disponible para aceptar viajes."` |
+| 409 | `CHOFER_NO_ELEGIBLE` | Sin ubicación reciente → `"El chofer no tiene una ubicación reciente. Debe informar su ubicación para recibir viajes."` |
 
 #### `GET /viajes/{id}`
 
@@ -524,7 +613,7 @@ Con la tarifa por defecto: `100000 + round(4,777 km × 50000) = 338850`, acotado
 
 #### `POST /viajes/{id}/aceptar`
 
-- **Roles:** `CHOFER`. Además, el chofer debe estar habilitado, disponible y libre.
+- **Roles:** `CHOFER`. Además, el chofer debe estar habilitado, disponible, libre y con una ubicación reciente.
 - **Descripción:** asigna el viaje al chofer y lo marca ocupado, en una sola transacción con bloqueo de filas (viaje y después chofer, ADR-0004). Si varios choferes aceptan a la vez, gana exactamente uno.
 - **Cuerpo:** ninguno.
 - **Éxito:** `200 OK`
@@ -559,7 +648,7 @@ Después, `GET /choferes/yo` devuelve `"viajeActivoId": "5d2e8f14-…"` y `"esta
 | 404 | `NO_ENCONTRADO` | `"El viaje no existe."` |
 | 409 | `VIAJE_NO_DISPONIBLE` | Ya asignado o cancelado → `"El viaje ya no está disponible para ser aceptado."` |
 | 409 | `CHOFER_OCUPADO` | `"El chofer ya tiene un viaje activo."` |
-| 409 | `CHOFER_NO_ELEGIBLE` | Sin perfil, inhabilitado o no disponible. |
+| 409 | `CHOFER_NO_ELEGIBLE` | Sin perfil, inhabilitado, no disponible o sin ubicación reciente. Se revalida dentro de la transacción. |
 
 #### `POST /viajes/{id}/cancelar`
 
@@ -711,6 +800,9 @@ Cualquier método o ruta no declarados responde:
     "usuarios": { "ok": true },
     "choferes": { "ok": true },
     "viajes": { "ok": true },
+    "cobros": { "ok": true },
+    "vehiculos": { "ok": true },
+    "ubicaciones": { "ok": true },
     "idempotencia": { "ok": true },
     "reloj": { "ok": true }
   },
@@ -918,51 +1010,17 @@ Cuando exista, **reemplaza a `POST /viajes`** (§8, D1).
 
 ### 5.4 Vehículo y ubicación del chofer
 
-Todas: **Propuesto — tarjeta E2 · RF-02 + RF-03**.
+`GET` y `PUT /choferes/yo/vehiculo` y `PUT /choferes/yo/ubicacion` **ya existen** (§4.3). Quedan propuestos:
 
-#### `GET /choferes/yo/vehiculo` y `PUT /choferes/yo/vehiculo`
-
-- **Roles:** `CHOFER` (propio).
-- **Cuerpo de `PUT`:**
-
-```json
-{
-  "patente": "AB123CD",
-  "marca": "Toyota",
-  "modelo": "Etios",
-  "anio": 2021,
-  "color": "Gris"
-}
-```
-
-`anio` y `color` son opcionales. La patente se normaliza a mayúsculas y es única.
-
-- **Éxito:** `200 OK` con `{ "vehiculo": { "id", "choferId", "patente", "marca", "modelo", "anio", "color" } }`. `GET` sin vehículo responde `404 NO_ENCONTRADO`.
-- **Errores:** `400 DATOS_INVALIDOS`, `403 NO_AUTORIZADO`, `409 PATENTE_YA_REGISTRADA` (propuesto).
-
-#### `GET /choferes/{usuarioId}`
+#### `GET /choferes/{usuarioId}` — Propuesto — tarjeta E5 · historial y soporte
 
 - **Roles:** `OPERADOR_SOPORTE`, `ADMINISTRADOR`.
-- **Descripción:** perfil operativo y vehículo de cualquier chofer. El caso de uso `obtener-perfil-chofer.js` ya admite al administrador; falta la ruta.
+- **Descripción:** perfil operativo y vehículo de cualquier chofer. Los casos de uso `obtener-perfil-chofer.js` y `obtener-vehiculo.js` ya admiten al administrador y a soporte; falta la ruta.
 - **Éxito:** `200 OK` con `{ "chofer": { … }, "vehiculo": { … } | null }`.
 
-#### `PUT /choferes/yo/ubicacion`
+#### Recorrido histórico — Propuesto — tarjeta E4 · ubicación, tiempo real y recorrido
 
-- **Roles:** `CHOFER` (propio).
-- **Descripción:** reemplaza la ubicación vigente. `actualizadaEn` la fija el servidor al recibirla. Si el chofer tiene un viaje activo, también agrega un punto histórico al recorrido (fase `ACERCAMIENTO` o `EN_CURSO`).
-- **Cuerpo:** `{ "lat": -34.6037, "lng": -58.3816 }`.
-- **Éxito:** `200 OK`
-
-```json
-{
-  "ubicacion": {
-    "punto": { "lat": -34.6037, "lng": -58.3816 },
-    "actualizadaEn": "2026-11-20T18:32:05.000Z"
-  }
-}
-```
-
-- **Errores:** `400 DATOS_INVALIDOS`, `403 NO_AUTORIZADO`, `429 DEMASIADAS_SOLICITUDES` (límite propio, §7.2).
+Cuando el chofer tenga un viaje activo, `PUT /choferes/yo/ubicacion` también agregará un punto histórico al recorrido (fase `ACERCAMIENTO` o `EN_CURSO`) en una tabla aparte, para no agrandar el índice de la ubicación vigente (RF-20).
 
 ### 5.5 Ofertas y asignación
 
@@ -1209,9 +1267,9 @@ Los endpoints propios de Python (`POST /reportes/zonas/{zonaId}/actualizar` y `G
 | *`POST /cotizaciones`* | ✓ | ✗ | ✗ | ✗ | ✗ |
 | *`GET /cotizaciones/{id}`* | propio | ✗ | ✓ | ✓ | ✗ |
 | *`POST /cotizaciones/{id}/confirmar`* | propio | ✗ | ✗ | ✗ | ✗ |
-| *`GET`, `PUT /choferes/yo/vehiculo`* | ✗ | propio | ✗ | ✗ | ✗ |
+| `GET`, `PUT /choferes/yo/vehiculo` | ✗ | propio | ✗ | ✗ | ✗ |
 | *`GET /choferes/{usuarioId}`* | ✗ | ✗ | ✓ | ✓ | ✗ |
-| *`PUT /choferes/yo/ubicacion`* | ✗ | propio | ✗ | ✗ | ✗ |
+| `PUT /choferes/yo/ubicacion` | ✗ | propio (habilitado) | ✗ | ✗ | ✗ |
 | *`GET /ofertas`* | ✗ | propio | ✗ | ✗ | ✗ |
 | *`POST /ofertas/{id}/aceptar`, `…/rechazar`* | ✗ | propio (destinatario) | ✗ | ✗ | ✗ |
 | *`POST /viajes/{id}/en-camino`, `…/iniciar`* | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
@@ -1258,13 +1316,14 @@ Hoy los casos de uso buscan el recurso **antes** de verificar el permiso: un ide
 - El contador del login es **por IP, no por email**: los fallos con distintos emails desde la misma IP se suman, y al superarlo también se rechaza un login correcto desde esa IP hasta que vence la ventana.
 - Los contadores viven **en memoria del proceso**: con varias instancias cada una cuenta por separado (ADR-0003).
 - `trust proxy` está en `1`: detrás de un proxy, la IP es la del primer salto de `X-Forwarded-For`.
+- `PUT /choferes/yo/ubicacion` no tiene un límite propio todavía: ver §7.2.
 
 ### 7.2 Límites propuestos para endpoints costosos
 
 | Endpoint | Motivo | Propuesta | Tarjeta |
 |---|---|---|---|
 | `POST /cotizaciones` | Cuenta solicitudes y choferes de la zona en cada llamada (ADR-0005, A1). | Límite por usuario, por ejemplo 30 por minuto. | E2 · cotizar y confirmar |
-| `PUT /choferes/yo/ubicacion` | Alta frecuencia por diseño. | Límite por chofer, por ejemplo 1 por segundo, independiente del global. | E2 · RF-02 + RF-03 |
+| `PUT /choferes/yo/ubicacion` | Alta frecuencia por diseño. Hoy solo la cubre el límite global por IP (300 por minuto): 500 choferes simulados desde una sola máquina cada 2 segundos (unos 15 000 por minuto) quedarían bloqueados. | Límite por chofer (clave `usuarioId`), por ejemplo 1 por segundo, en lugar del global por IP. | E4 · simulador, carga y mediciones |
 | `GET /reportes/zonas/{zonaId}` | Llama a otro servicio. | Límite por usuario, por ejemplo 10 por minuto. | E4 · parte Python |
 
 Los límites por usuario usan el `usuarioId` del token como clave, no la IP. Si se pasa a varias instancias, los contadores se mueven a un almacén compartido.
@@ -1291,15 +1350,15 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 |---|---|---|---|---|
 | D1 | El viaje se crea directo, sin cotización. | El viaje nace al **confirmar una cotización** y guarda `cotizacionId` y `multiplicadorFijado` (§4.10, §6.1; ADR-0005). | `POST /viajes` crea el viaje con una tarifa provisional por distancia, sin multiplicador, sin zona y sin tiempo estimado. No existen `cotizacionId` ni `multiplicadorFijado`. | E2 · RF-04 + RF-17 + RF-05 + RF-18 + RF-19 |
 | D2 | No hay ofertas. | El viaje se **ofrece** a choferes elegibles y se acepta una oferta con vencimiento (§4.11, §6.2). | Cualquier chofer elegible ve todos los viajes `SOLICITADO` en `GET /viajes/disponibles` y acepta el viaje directamente. | E3 · ofertas y asignación |
-| D3 | La elegibilidad no mira la ubicación. | Chofer elegible = habilitado, disponible, libre **y con ubicación vigente reciente** (§2, I5). | Solo verifica habilitado, disponible y libre; no existe la ubicación. | E2 · RF-02 + RF-03 |
-| D4 | Habilitar no exige vehículo. | Habilitar exige un vehículo registrado (§6.4, Q11, propuesta). | `PATCH /choferes/{id}/habilitacion` habilita sin condición; no existe el vehículo. | E2 · RF-02 + RF-03 |
+| D3 | ~~La elegibilidad no mira la ubicación.~~ **Resuelta.** | Chofer elegible = habilitado, disponible, libre **y con ubicación vigente reciente** (§2, I5). | Listar y aceptar viajes exigen una ubicación de menos de `UBICACION_VIGENCIA_MS` (60 s por defecto). | Resuelta en E2 · RF-02 + RF-03 |
+| D4 | ~~Habilitar no exige vehículo.~~ **Resuelta.** | Habilitar exige un vehículo registrado (§6.4, Q11, propuesta). | Habilitar sin vehículo responde `409 CHOFER_SIN_VEHICULO`; el vehículo no se puede borrar. | Resuelta en E2 · RF-02 + RF-03 |
 | D5 | Faltan estados del viaje. | `CHOFER_EN_CAMINO`, `EN_CURSO`, `FINALIZADO`, `CANCELADO_POR_CHOFER`, `CANCELADO_POR_SOPORTE` y `SIN_CHOFERES_DISPONIBLES` con sus transiciones (§6.1). | La entidad `Viaje` del dominio no tiene `CHOFER_EN_CAMINO` ni `EN_CURSO` (la migración `002_viajes.sql` sí los admite), y solo hay transiciones `SOLICITADO → ASIGNADO` y cancelación por pasajero. | E3 · ofertas y asignación, E4 · tarifa y cobro |
 | D6 | El pasajero no puede cancelar con el chofer en camino. | El pasajero cancela en `SOLICITADO`, `ASIGNADO` y `CHOFER_EN_CAMINO` (§6.1). | `cancelarPorPasajero` solo admite `SOLICITADO` y `ASIGNADO` (consecuencia de D5). | E3 · ofertas y asignación |
 | D7 | Faltan atributos del viaje. | `iniciadoEn`, `distanciaRealM`, `tiempoRealS`, `tarifaFinal` (§4.10). | No existen. `POST /viajes/{id}/finalizar` solo fija `cerradoEn`. | E4 · tarifa y cobro |
 | D8 | Nombre del precio. | `precioFijado` (§4.10). | `precioFijadoCentavos`. Se propone adoptar el sufijo `Centavos` en todos los montos de la API (§1) y alinear el modelo. | E2 · cotizar y confirmar |
 | D9 | Tarifa provisional distinta de la del modelo. | `Tarifa` versionada con `base`, `porKm`, `porMinuto` y `precioMaximo`; sin mínimo (§4.7, §7.2). | Variables de entorno `TARIFA_BASE_CENTAVOS`, `TARIFA_POR_KM_CENTAVOS`, `TARIFA_MINIMO_CENTAVOS` y `TARIFA_MAXIMO_CENTAVOS`; sin componente por minuto; con mínimo. | E2 · RF-23 + RF-16 |
 | D10 | Soporte no ve usuarios. | El operador ve los datos básicos de los participantes de los viajes que atiende (§3). | `GET /usuarios/{id}` solo admite al propio usuario y al administrador; soporte recibe 403. | E5 · historial y soporte |
-| D11 | Soporte y administrador no ven el perfil de chofer. | Ambos pueden ver el chofer y su vehículo (§3). | Solo existe `GET /choferes/yo`, limitado a `CHOFER`, aunque el caso de uso ya admite al administrador. Se propone `GET /choferes/{usuarioId}` (§5.4). | E2 · RF-02 + RF-03 |
+| D11 | Soporte y administrador no ven el perfil de chofer. | Ambos pueden ver el chofer y su vehículo (§3). | Solo existen `GET /choferes/yo` y `GET /choferes/yo/vehiculo`, limitados a `CHOFER`, aunque los casos de uso ya admiten al administrador y a soporte. Se propone `GET /choferes/{usuarioId}` (§5.4). | E5 · historial y soporte |
 | D12 | El chofer ve todos los viajes solicitados. | El chofer ve solo los viajes que se le **ofrecieron** o asignaron (§3). | `GET /viajes/disponibles` muestra cualquier viaje `SOLICITADO`, con el `pasajeroId`. Se resuelve con las ofertas (D2). | E3 · ofertas y asignación |
 | D13 | El administrador no crea cuentas del personal. | El administrador crea operadores y administradores (§3, Q7, propuesta). | Solo el seed las crea (ADR-0003 lo admite como estado actual). Se propone `POST /usuarios` (§5.1). | E1 · RF-01 y base transversal |
 | D14 | Un único código para dos tipos de 403. | `TRANSICION_INVALIDA` cubre también «el actor no puede ejecutarlo» (§9.1). | El código usa `403 NO_AUTORIZADO` tanto para el rol como para el recurso. Se propone mantener `NO_AUTORIZADO` para permisos y reservar `TRANSICION_INVALIDA` para el estado, y actualizar §9.1 del modelo. | E1 · RF-01 y base transversal |

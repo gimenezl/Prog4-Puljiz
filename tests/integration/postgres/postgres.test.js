@@ -6,7 +6,9 @@ import { setTimeout as esperar } from 'node:timers/promises';
 import { aplicarMigraciones } from '../../../scripts/migrate.js';
 import { composeApplication } from '../../../src/composition-root.js';
 import { ErrorDeDominio } from '../../../src/domain/errors/error-de-dominio.js';
+import { UbicacionChofer } from '../../../src/domain/entities/ubicacion-chofer.js';
 import { ROLES, Usuario } from '../../../src/domain/entities/usuario.js';
+import { Vehiculo } from '../../../src/domain/entities/vehiculo.js';
 import { loadEnv } from '../../../src/infrastructure/config/env.js';
 import { detenerServidor, iniciarServidor } from '../../helpers/http-server.js';
 import { crearKitPostgres } from '../../helpers/postgres-kit.js';
@@ -120,12 +122,26 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       `SELECT table_name
          FROM information_schema.tables
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+          AND table_name <> 'spatial_ref_sys' -- la crea la extensión PostGIS
         ORDER BY table_name`,
     );
 
+    const postgis = await kit.baseDeDatos.query(
+      `SELECT extversion FROM pg_extension WHERE extname = 'postgis'`,
+    );
+    assert.equal(postgis.rows.length, 1, 'falta la extensión PostGIS');
+
     assert.deepEqual(
       tablas.rows.map((fila) => fila.table_name),
-      ['choferes', 'claves_idempotencia', 'cobros_simulados', 'usuarios', 'viajes'],
+      [
+        'choferes',
+        'claves_idempotencia',
+        'cobros_simulados',
+        'ubicaciones_vigentes',
+        'usuarios',
+        'vehiculos',
+        'viajes',
+      ],
     );
 
     const indices = await kit.baseDeDatos.query(
@@ -138,6 +154,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       'viajes_chofer_activo_idx',
       'claves_idempotencia_vence_en_idx',
       'cobros_simulados_estado_idx',
+      'ubicaciones_vigentes_posicion_idx',
     ]) {
       assert.equal(nombres.has(indice), true, `falta el índice ${indice}`);
     }
@@ -193,6 +210,83 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
 
     const duplicada = await kit.repositorioClavesIdempotencia.crear(registro);
     assert.equal(duplicada, false);
+  });
+
+  test('el repositorio de vehículos guarda, reemplaza y rechaza patentes duplicadas', async () => {
+    const { usuario: chofer } = await kit.crearChofer();
+    const { usuario: otroChofer } = await kit.crearChofer();
+
+    const vehiculo = new Vehiculo({
+      id: randomUUID(),
+      choferId: chofer.id,
+      patente: 'AB123CD',
+      marca: 'Toyota',
+      modelo: 'Etios',
+      anio: 2021,
+    });
+    await kit.repositorioVehiculos.guardar(vehiculo);
+
+    const leido = await kit.repositorioVehiculos.buscarPorChoferId(chofer.id);
+    assert.deepEqual(leido.aVistaPublica(), vehiculo.aVistaPublica());
+
+    // Guardar otra vez para el mismo chofer reemplaza los datos y conserva el id.
+    await kit.repositorioVehiculos.guardar(
+      vehiculo.conDatos({ patente: 'ABC123', marca: 'Fiat', modelo: 'Cronos' }),
+    );
+    const editado = await kit.repositorioVehiculos.buscarPorChoferId(chofer.id);
+    assert.equal(editado.id, vehiculo.id);
+    assert.equal(editado.patente, 'ABC123');
+    assert.equal(editado.anio, null);
+
+    await assert.rejects(
+      () =>
+        kit.repositorioVehiculos.guardar(
+          new Vehiculo({
+            id: randomUUID(),
+            choferId: otroChofer.id,
+            patente: 'ABC123',
+            marca: 'Ford',
+            modelo: 'Ka',
+          }),
+        ),
+      (error) => error.codigo === 'PATENTE_YA_REGISTRADA',
+    );
+
+    assert.equal(await kit.repositorioVehiculos.buscarPorChoferId(otroChofer.id), null);
+  });
+
+  test('el repositorio de ubicaciones guarda puntos PostGIS y no retrocede', async () => {
+    const { usuario: chofer } = await kit.crearChofer();
+    const ubicacion = (punto, iso) =>
+      new UbicacionChofer({ choferId: chofer.id, punto, actualizadaEn: new Date(iso) });
+
+    const obelisco = { lat: -34.6037, lng: -58.3816 };
+    await kit.repositorioUbicaciones.guardar(ubicacion(obelisco, '2026-11-20T18:00:00.000Z'));
+
+    const leida = await kit.repositorioUbicaciones.buscarPorChoferId(chofer.id);
+    assert.deepEqual(leida.punto.aJSON(), obelisco);
+    assert.equal(leida.actualizadaEn.toISOString(), '2026-11-20T18:00:00.000Z');
+
+    // Un envío más nuevo reemplaza; uno más viejo no.
+    const palermo = { lat: -34.5889, lng: -58.4306 };
+    await kit.repositorioUbicaciones.guardar(ubicacion(palermo, '2026-11-20T18:00:02.000Z'));
+    await kit.repositorioUbicaciones.guardar(ubicacion(obelisco, '2026-11-20T18:00:01.000Z'));
+    assert.deepEqual(
+      (await kit.repositorioUbicaciones.buscarPorChoferId(chofer.id)).punto.aJSON(),
+      palermo,
+    );
+
+    // PostGIS calcula distancias reales en metros: Obelisco-Palermo son ~4,8 km.
+    const { rows } = await kit.baseDeDatos.query(
+      `SELECT ST_Distance(posicion, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography) AS metros,
+              ST_DWithin(posicion, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography, 3000) AS a_3km,
+              ST_DWithin(posicion, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography, 6000) AS a_6km
+         FROM ubicaciones_vigentes WHERE chofer_id = $1`,
+      [chofer.id, obelisco.lng, obelisco.lat],
+    );
+    assert.equal(Math.round(rows[0].metros / 100) * 100, 4800);
+    assert.equal(rows[0].a_3km, false);
+    assert.equal(rows[0].a_6km, true);
   });
 
   test('las restricciones de la base rechazan datos incoherentes y duplicados', async () => {
@@ -693,6 +787,14 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     assert.equal(estado.chequeos.viajes.ok, true);
     assert.equal(estado.chequeos.cobros.ok, true);
     assert.equal(estado.chequeos.idempotencia.ok, true);
+    assert.equal(estado.chequeos.vehiculos.ok, true);
+
+    const vehiculo = await llamarHttp(`${urlBase}/choferes/yo/vehiculo`, {
+      method: 'PUT',
+      token: chofer.token,
+      body: { patente: 'AE123ZZ', marca: 'Toyota', modelo: 'Etios' },
+    });
+    assert.equal(vehiculo.respuesta.status, 201);
 
     const habilitacion = await llamarHttp(`${urlBase}/choferes/${chofer.usuario.id}/habilitacion`, {
       method: 'PATCH',
@@ -707,6 +809,13 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       body: { disponible: true },
     });
     assert.equal(disponibilidad.respuesta.status, 200);
+
+    const ubicacion = await llamarHttp(`${urlBase}/choferes/yo/ubicacion`, {
+      method: 'PUT',
+      token: chofer.token,
+      body: { lat: -34.6037, lng: -58.3816 },
+    });
+    assert.equal(ubicacion.respuesta.status, 200);
 
     const creacion = await llamarHttp(`${urlBase}/viajes`, {
       method: 'POST',

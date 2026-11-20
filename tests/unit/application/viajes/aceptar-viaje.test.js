@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { crearKitViajes } from '../../../helpers/viajes-kit.js';
+import { UbicacionChofer } from '../../../../src/domain/entities/ubicacion-chofer.js';
+import { crearKitViajes, ORIGEN, VIGENCIA_UBICACION_MS } from '../../../helpers/viajes-kit.js';
 
 test('un chofer elegible acepta el viaje y queda ocupado', async () => {
   const kit = crearKitViajes();
@@ -112,4 +113,48 @@ test('rechaza choferes inhabilitados o no disponibles sin tocar el viaje', async
   );
 
   assert.equal((await kit.repositorioViajes.buscarPorId(viaje.id)).estado, 'SOLICITADO');
+});
+
+test('sin ubicación vigente el chofer no lista ni acepta viajes', async () => {
+  const kit = crearKitViajes();
+  const { viaje } = await kit.crearViajeDePrueba();
+  const chofer = await kit.crearChofer({ conUbicacion: false });
+  const esNoElegible = (error) => error.codigo === 'CHOFER_NO_ELEGIBLE';
+
+  await assert.rejects(
+    () => kit.listarViajesDisponibles({ choferId: chofer.usuarioId }),
+    esNoElegible,
+  );
+  await assert.rejects(
+    () => kit.aceptarViaje({ viajeId: viaje.id, choferId: chofer.usuarioId }),
+    esNoElegible,
+  );
+
+  // El rechazo no deja nada a medias: el viaje sigue libre y el chofer también.
+  assert.equal((await kit.repositorioViajes.buscarPorId(viaje.id)).estado, 'SOLICITADO');
+  const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuarioId);
+  assert.equal(perfil.viajeActivoId, null);
+});
+
+test('la ubicación vence a los 60 segundos (límite exclusivo)', async () => {
+  const kit = crearKitViajes();
+  const chofer = await kit.crearChofer({ conUbicacion: false });
+  const ahora = kit.reloj.ahora().getTime();
+  const informarHace = (ms) =>
+    kit.repositorioUbicaciones.guardar(
+      new UbicacionChofer({
+        choferId: chofer.usuarioId,
+        punto: ORIGEN,
+        actualizadaEn: new Date(ahora - ms),
+      }),
+    );
+
+  await informarHace(VIGENCIA_UBICACION_MS);
+  await assert.rejects(
+    () => kit.listarViajesDisponibles({ choferId: chofer.usuarioId }),
+    (error) => error.codigo === 'CHOFER_NO_ELEGIBLE',
+  );
+
+  await informarHace(VIGENCIA_UBICACION_MS - 1);
+  assert.deepEqual(await kit.listarViajesDisponibles({ choferId: chofer.usuarioId }), []);
 });

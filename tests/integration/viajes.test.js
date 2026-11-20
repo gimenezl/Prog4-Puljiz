@@ -5,6 +5,7 @@ import { composeApplication } from '../../src/composition-root.js';
 import { ROLES, Usuario } from '../../src/domain/entities/usuario.js';
 import { loadEnv } from '../../src/infrastructure/config/env.js';
 import { detenerServidor, iniciarServidor } from '../helpers/http-server.js';
+import { datosDeVehiculoDePrueba } from '../helpers/vehiculos-kit.js';
 
 const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
 const ORIGEN = { lat: -34.6037, lng: -58.3816 };
@@ -91,6 +92,13 @@ async function crearAdministrador(composicion, urlBase) {
 async function prepararChofer(composicion, urlBase, admin, datos) {
   const sesion = await crearCuenta(urlBase, { ...datos, rol: 'CHOFER' });
 
+  const vehiculo = await llamar(`${urlBase}/choferes/yo/vehiculo`, {
+    method: 'PUT',
+    token: sesion.token,
+    body: datosDeVehiculoDePrueba(),
+  });
+  assert.equal(vehiculo.respuesta.status, 201);
+
   const habilitacion = await llamar(`${urlBase}/choferes/${sesion.usuario.id}/habilitacion`, {
     method: 'PATCH',
     token: admin.token,
@@ -104,6 +112,13 @@ async function prepararChofer(composicion, urlBase, admin, datos) {
     body: { disponible: true },
   });
   assert.equal(disponibilidad.respuesta.status, 200);
+
+  const ubicacion = await llamar(`${urlBase}/choferes/yo/ubicacion`, {
+    method: 'PUT',
+    token: sesion.token,
+    body: { lat: -34.6037, lng: -58.3816 },
+  });
+  assert.equal(ubicacion.respuesta.status, 200);
 
   return sesion;
 }
@@ -157,6 +172,20 @@ test('flujo completo: registro de chofer, idempotencia, aceptación y cancelaci�
   });
   assert.equal(habilitacionAjena.respuesta.status, 403);
 
+  const habilitacionSinVehiculo = await llamar(
+    `${urlBase}/choferes/${chofer.usuario.id}/habilitacion`,
+    { method: 'PATCH', token: admin.token, body: { habilitado: true } },
+  );
+  assert.equal(habilitacionSinVehiculo.respuesta.status, 409);
+  assert.equal(habilitacionSinVehiculo.cuerpo.error.codigo, 'CHOFER_SIN_VEHICULO');
+
+  const vehiculo = await llamar(`${urlBase}/choferes/yo/vehiculo`, {
+    method: 'PUT',
+    token: chofer.token,
+    body: datosDeVehiculoDePrueba(),
+  });
+  assert.equal(vehiculo.respuesta.status, 201);
+
   const habilitacion = await llamar(`${urlBase}/choferes/${chofer.usuario.id}/habilitacion`, {
     method: 'PATCH',
     token: admin.token,
@@ -172,6 +201,18 @@ test('flujo completo: registro de chofer, idempotencia, aceptación y cancelaci�
   });
   assert.equal(disponibilidad.respuesta.status, 200);
   assert.equal(disponibilidad.cuerpo.chofer.estado, 'DISPONIBLE');
+
+  // Sin ubicación reciente el chofer todavía no es elegible.
+  const sinUbicacion = await llamar(`${urlBase}/viajes/disponibles`, { token: chofer.token });
+  assert.equal(sinUbicacion.respuesta.status, 409);
+  assert.equal(sinUbicacion.cuerpo.error.codigo, 'CHOFER_NO_ELEGIBLE');
+
+  const ubicacion = await llamar(`${urlBase}/choferes/yo/ubicacion`, {
+    method: 'PUT',
+    token: chofer.token,
+    body: { lat: -34.6037, lng: -58.3816 },
+  });
+  assert.equal(ubicacion.respuesta.status, 200);
 
   const viajePorChofer = await crearViaje(urlBase, chofer.token);
   assert.equal(viajePorChofer.respuesta.status, 403);

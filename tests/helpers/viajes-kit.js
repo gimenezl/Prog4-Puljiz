@@ -9,14 +9,19 @@ import { crearListarViajesDisponibles } from '../../src/application/use-cases/vi
 import { crearObtenerCobro } from '../../src/application/use-cases/viajes/obtener-cobro.js';
 import { crearObtenerViaje } from '../../src/application/use-cases/viajes/obtener-viaje.js';
 import { Chofer } from '../../src/domain/entities/chofer.js';
+import { UbicacionChofer } from '../../src/domain/entities/ubicacion-chofer.js';
+import { Vehiculo } from '../../src/domain/entities/vehiculo.js';
 import { FixedClock } from '../../src/infrastructure/adapters/out/clock/fixed-clock.js';
 import { InMemoryIdGenerator } from '../../src/infrastructure/adapters/out/ids/in-memory-id-generator.js';
 import { SimuladorDeCobroEnMemoria } from '../../src/infrastructure/adapters/out/payments/simulador-de-cobro-en-memoria.js';
 import { InMemoryChoferRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-chofer-repository.js';
 import { InMemoryCobroRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-cobro-repository.js';
 import { InMemoryIdempotencyRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-idempotency-repository.js';
+import { InMemoryUbicacionRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-ubicacion-repository.js';
 import { InMemoryUnitOfWork } from '../../src/infrastructure/adapters/out/persistence/in-memory-unit-of-work.js';
+import { InMemoryVehiculoRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-vehiculo-repository.js';
 import { InMemoryViajeRepository } from '../../src/infrastructure/adapters/out/persistence/in-memory-viaje-repository.js';
+import { datosDeVehiculoDePrueba } from './vehiculos-kit.js';
 
 export const TARIFA_DE_PRUEBA = Object.freeze({
   baseCentavos: 100000,
@@ -27,6 +32,7 @@ export const TARIFA_DE_PRUEBA = Object.freeze({
 
 export const ORIGEN = Object.freeze({ lat: -34.6037, lng: -58.3816 });
 export const DESTINO = Object.freeze({ lat: -34.6083, lng: -58.3712 });
+export const VIGENCIA_UBICACION_MS = 60_000;
 
 /**
  * Kit de viajes con adaptadores en memoria. Cada llamada crea un grafo aislado
@@ -42,6 +48,8 @@ export function crearKitViajes({
   const repositorioChoferes = new InMemoryChoferRepository();
   const repositorioCobros = new InMemoryCobroRepository();
   const repositorioClavesIdempotencia = new InMemoryIdempotencyRepository();
+  const repositorioVehiculos = new InMemoryVehiculoRepository();
+  const repositorioUbicaciones = new InMemoryUbicacionRepository();
   const simuladorDeCobro = new SimuladorDeCobroEnMemoria();
   const unidadDeTrabajo = new InMemoryUnitOfWork({
     participantes: [
@@ -49,6 +57,8 @@ export function crearKitViajes({
       repositorioViajes,
       repositorioCobros,
       repositorioClavesIdempotencia,
+      repositorioVehiculos,
+      repositorioUbicaciones,
     ],
   });
   const generadorIds = new InMemoryIdGenerator();
@@ -57,6 +67,8 @@ export function crearKitViajes({
     reloj,
     repositorioViajes,
     repositorioChoferes,
+    repositorioVehiculos,
+    repositorioUbicaciones,
     repositorioCobros,
     repositorioClavesIdempotencia,
     simuladorDeCobro,
@@ -74,8 +86,10 @@ export function crearKitViajes({
     aceptarViaje: crearAceptarViaje({
       repositorioViajes,
       repositorioChoferes,
+      repositorioUbicaciones,
       unidadDeTrabajo,
       reloj,
+      vigenciaUbicacionMs: VIGENCIA_UBICACION_MS,
     }),
     cancelarViaje: crearCancelarViaje({
       repositorioViajes,
@@ -99,6 +113,9 @@ export function crearKitViajes({
     listarViajesDisponibles: crearListarViajesDisponibles({
       repositorioViajes,
       repositorioChoferes,
+      repositorioUbicaciones,
+      reloj,
+      vigenciaUbicacionMs: VIGENCIA_UBICACION_MS,
     }),
     obtenerPerfilChofer: crearObtenerPerfilChofer({ repositorioChoferes }),
     actualizarDisponibilidadChofer: crearActualizarDisponibilidadChofer({
@@ -107,13 +124,27 @@ export function crearKitViajes({
     }),
     habilitarChofer: crearHabilitarChofer({
       repositorioChoferes,
+      repositorioVehiculos,
       unidadDeTrabajo,
     }),
   };
 
+  kit.crearVehiculo = async (choferId) => {
+    const vehiculo = new Vehiculo({
+      id: generadorIds.generar(),
+      choferId,
+      ...datosDeVehiculoDePrueba(),
+    });
+
+    await repositorioVehiculos.guardar(vehiculo);
+    return vehiculo;
+  };
+
   kit.crearPasajero = () => generadorIds.generar();
 
-  kit.crearChofer = async ({ habilitado = true, disponible = true } = {}) => {
+  // Por defecto el chofer queda con una ubicación vigente (la hora del reloj
+  // del kit), como un chofer real que tiene la app abierta.
+  kit.crearChofer = async ({ habilitado = true, disponible = true, conUbicacion = true } = {}) => {
     const chofer = new Chofer({
       usuarioId: generadorIds.generar(),
       habilitado,
@@ -121,6 +152,17 @@ export function crearKitViajes({
     });
 
     await repositorioChoferes.crear(chofer);
+
+    if (conUbicacion) {
+      await repositorioUbicaciones.guardar(
+        new UbicacionChofer({
+          choferId: chofer.usuarioId,
+          punto: ORIGEN,
+          actualizadaEn: reloj.ahora(),
+        }),
+      );
+    }
+
     return chofer;
   };
 

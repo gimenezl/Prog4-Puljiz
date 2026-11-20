@@ -6,11 +6,13 @@
  * fake todo vive en memoria y cada ejecución arranca de cero.
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 
 import { composeApplication } from '../../src/composition-root.js';
 import { Chofer } from '../../src/domain/entities/chofer.js';
+import { UbicacionChofer } from '../../src/domain/entities/ubicacion-chofer.js';
 import { ROLES, Usuario } from '../../src/domain/entities/usuario.js';
+import { Vehiculo } from '../../src/domain/entities/vehiculo.js';
 import { loadEnv } from '../../src/infrastructure/config/env.js';
 import {
   closeHttpServer,
@@ -111,6 +113,11 @@ export async function crearContexto({
   }
 }
 
+function patenteAleatoria() {
+  const letra = () => String.fromCharCode(65 + randomInt(26));
+  return `${letra()}${letra()}${String(randomInt(1000)).padStart(3, '0')}${letra()}${letra()}`;
+}
+
 function emailDe(contexto, clave) {
   return `verif-${contexto.sufijo}-${clave}@prog4.test`;
 }
@@ -144,6 +151,25 @@ export async function sembrarUsuarios(contexto, definiciones) {
           usuarioId: usuario.id,
           habilitado: true,
           disponible: true,
+        }),
+      );
+      // Un chofer habilitado tiene que tener vehículo (Q11). La patente es
+      // aleatoria para no chocar entre ejecuciones contra PostgreSQL.
+      await dependencias.repositorioVehiculos.guardar(
+        new Vehiculo({
+          id: randomUUID(),
+          choferId: usuario.id,
+          patente: patenteAleatoria(),
+          marca: 'Toyota',
+          modelo: 'Etios',
+        }),
+      );
+      // Ubicación reciente para que pueda listar y aceptar viajes (RF-03).
+      await dependencias.repositorioUbicaciones.guardar(
+        new UbicacionChofer({
+          choferId: usuario.id,
+          punto: { lat: -34.6037, lng: -58.3816 },
+          actualizadaEn: ahora,
         }),
       );
     }

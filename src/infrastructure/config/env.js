@@ -46,6 +46,8 @@ const esquemaEntorno = z
     TARIFA_POR_KM_CENTAVOS: z.coerce.number().int().min(0).default(50000),
     TARIFA_MINIMO_CENTAVOS: z.coerce.number().int().min(0).default(150000),
     TARIFA_MAXIMO_CENTAVOS: z.coerce.number().int().min(0).default(1000000),
+    // Antigüedad máxima de la ubicación de un chofer para recibir viajes (RF-03).
+    UBICACION_VIGENCIA_MS: z.coerce.number().int().min(1000).default(60000),
     IDEMPOTENCIA_TTL_MS: z.coerce
       .number()
       .int()

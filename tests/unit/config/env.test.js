@@ -32,6 +32,7 @@ test('acepta el modo fake sin DATABASE_URL', () => {
   assert.equal(entorno.TARIFA_MINIMO_CENTAVOS, 150000);
   assert.equal(entorno.TARIFA_MAXIMO_CENTAVOS, 1000000);
   assert.equal(entorno.IDEMPOTENCIA_TTL_MS, 86400000);
+  assert.equal(entorno.UBICACION_VIGENCIA_MS, 60000);
 });
 
 test('falla al arrancar si falta DATABASE_URL en modo real', () => {

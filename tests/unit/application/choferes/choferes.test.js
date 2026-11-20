@@ -11,6 +11,7 @@ const ADMIN = Object.freeze({
 test('un administrador habilita al chofer y el chofer declara disponibilidad', async () => {
   const kit = crearKitViajes();
   const chofer = await kit.crearChofer({ habilitado: false });
+  await kit.crearVehiculo(chofer.usuarioId);
 
   const habilitado = await kit.habilitarChofer({
     usuarioId: chofer.usuarioId,
@@ -31,7 +32,21 @@ test('un administrador habilita al chofer y el chofer declara disponibilidad', a
   assert.equal(disponible.estaElegible(), true);
 });
 
-test('inhabilitar a un chofer lo deja no disponible', async () => {
+test('habilitar exige vehículo registrado y no cambia el perfil si falta', async () => {
+  const kit = crearKitViajes();
+  const chofer = await kit.crearChofer({ habilitado: false });
+
+  await assert.rejects(
+    () =>
+      kit.habilitarChofer({ usuarioId: chofer.usuarioId, solicitante: ADMIN, habilitado: true }),
+    (error) => error.codigo === 'CHOFER_SIN_VEHICULO',
+  );
+
+  const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuarioId);
+  assert.equal(perfil.habilitado, false);
+});
+
+test('inhabilitar a un chofer lo deja no disponible (aunque no tenga vehículo)', async () => {
   const kit = crearKitViajes();
   const chofer = await kit.crearChofer({ habilitado: true, disponible: true });
 
