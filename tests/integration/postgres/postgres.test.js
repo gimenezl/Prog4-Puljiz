@@ -137,10 +137,13 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
         'choferes',
         'claves_idempotencia',
         'cobros_simulados',
+        'reglas_multiplicador',
+        'tarifas',
         'ubicaciones_vigentes',
         'usuarios',
         'vehiculos',
         'viajes',
+        'zonas_de_demanda',
       ],
     );
 
@@ -155,6 +158,12 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       'claves_idempotencia_vence_en_idx',
       'cobros_simulados_estado_idx',
       'ubicaciones_vigentes_posicion_idx',
+      'zonas_de_demanda_nombre_lower_idx',
+      'zonas_de_demanda_area_idx',
+      'tarifas_version_publicada_idx',
+      'tarifas_publicadas_vigencia_idx',
+      'reglas_multiplicador_version_publicada_idx',
+      'reglas_multiplicador_publicadas_vigencia_idx',
     ]) {
       assert.equal(nombres.has(indice), true, `falta el índice ${indice}`);
     }
@@ -261,16 +270,20 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       new UbicacionChofer({ choferId: chofer.id, punto, actualizadaEn: new Date(iso) });
 
     const obelisco = { lat: -34.6037, lng: -58.3816 };
-    await kit.repositorioUbicaciones.guardar(ubicacion(obelisco, '2026-11-20T18:00:00.000Z'));
+    // El kit crea al chofer con una ubicación en `ahora`; estos envíos deben ser
+    // posteriores para que la primera escritura reemplace esa ubicación.
+    const base = Date.now() + 60 * 60 * 1000;
+    const instante = (desplazamientoMs) => new Date(base + desplazamientoMs).toISOString();
+    await kit.repositorioUbicaciones.guardar(ubicacion(obelisco, instante(0)));
 
     const leida = await kit.repositorioUbicaciones.buscarPorChoferId(chofer.id);
     assert.deepEqual(leida.punto.aJSON(), obelisco);
-    assert.equal(leida.actualizadaEn.toISOString(), '2026-11-20T18:00:00.000Z');
+    assert.equal(leida.actualizadaEn.toISOString(), instante(0));
 
     // Un envío más nuevo reemplaza; uno más viejo no.
     const palermo = { lat: -34.5889, lng: -58.4306 };
-    await kit.repositorioUbicaciones.guardar(ubicacion(palermo, '2026-11-20T18:00:02.000Z'));
-    await kit.repositorioUbicaciones.guardar(ubicacion(obelisco, '2026-11-20T18:00:01.000Z'));
+    await kit.repositorioUbicaciones.guardar(ubicacion(palermo, instante(2_000)));
+    await kit.repositorioUbicaciones.guardar(ubicacion(obelisco, instante(1_000)));
     assert.deepEqual(
       (await kit.repositorioUbicaciones.buscarPorChoferId(chofer.id)).punto.aJSON(),
       palermo,
