@@ -7,7 +7,7 @@
 
 Convenciones para las migraciones:
 
-- Nombre `NNNN-descripcion.sql` (por ejemplo `0001-crear-usuarios.sql`).
+- Nombre `NNN_descripcion.sql` (por ejemplo `001_usuarios.sql`).
 - SQL explícito, legible y reversible cuando sea posible.
 - Las restricciones únicas e índices parciales del modelo de dominio se
   declaran en la migración correspondiente.
@@ -21,6 +21,18 @@ Migraciones actuales:
 - `001_usuarios.sql`: cuentas y unicidad del email sin distinguir mayúsculas.
 - `002_viajes.sql`: viajes, perfiles de chofer y claves de idempotencia. Incluye
   el índice único parcial que impide dos viajes activos por chofer.
+- `003_cobros_simulados.sql`: cobros simulados por viaje y su estado.
+- `004_postgis.sql`: extensión PostGIS, requerida por ubicaciones y zonas.
+- `005_vehiculos.sql`: vehículo de cada chofer, con patente única.
+- `006_ubicaciones_vigentes.sql`: última ubicación de cada chofer con índice
+  espacial GiST.
+- `007_funciones_configuracion_versionada.sql`: función compartida de versionado
+  e inmutabilidad de configuraciones publicadas.
+- `008_zonas_de_demanda.sql`: zonas con área PostGIS y control de solapamiento
+  entre zonas activas (I16).
+- `009_tarifas.sql`: tarifas globales versionadas con importes en centavos.
+- `010_reglas_multiplicador.sql`: reglas de multiplicador versionadas con
+  umbrales y escala fijos (RF-16).
 
 ## Base de pruebas
 

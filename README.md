@@ -75,6 +75,10 @@ en curso y cierra la pool de PostgreSQL. Si el cierre supera
 - `docs/implementacion-bloque-1-y-3.md`: Docker, arranque y ciclo de vida.
 - `docs/implementacion-bloque-5.md`: viajes, concurrencia e idempotencia.
 - `docs/implementacion-bloque-6.md`: PostgreSQL real para tests.
+- `docs/migraciones-configuracion-administrativa.md`: esquema de zonas de
+  demanda, tarifas y reglas de multiplicador (RF-23 y RF-16).
+- `docs/rf23-rf16-requerimientos-y-cambios.md`: requerimientos, decisiones,
+  cambios y verificaciones de la configuración administrativa versionada.
 - `docs/modelo.md`: modelo de dominio y diagramas.
 - `docs/api.md`: contrato de la API HTTP, códigos de error, rate limits y tabla de permisos.
 - `docs/politica-de-idempotencia.md`: alcance, reintentos, conflictos y cobros.
