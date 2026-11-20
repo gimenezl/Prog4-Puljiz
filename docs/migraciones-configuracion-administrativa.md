@@ -1,26 +1,32 @@
 # Migraciones de configuración administrativa (RF-23 + RF-16)
 
-- **Estado:** implementada, verificada y publicada en la rama de trabajo.
+- **Estado:** implementada y verificada en el árbol de trabajo; **commit y push
+  pendientes de confirmación**.
 - **Fecha:** 2026-11-19; última verificación: 2026-11-20.
-- **Rama de trabajo:** `E2 · RF-23 + RF-16 — Tarifas, zonas y multiplicador por demanda`.
-- **Base:** `main` actualizado a `3c8591b` (PR #8: vehículo, ubicación y PostGIS).
+- **Rama de trabajo:** `E2-·-RF-23-+-RF-16---Tarifas,-zonas-y-multiplicador-por-demanda`.
+- **Base:** `main` en `3c8591b` (PR #8: vehículo, ubicación y PostGIS). El
+  esquema `007`–`010` quedó en `786debb`; `011` y el resto de la entrega están
+  sin commitear.
 - **Referencias:** `docs/modelo.md` §3, §4.5, §4.6, §4.7, §7.1, §8 (I12 e I16);
   `docs/adr/0005-cotizacion-inmutable-para-precio-dinamico.md`;
   `docs/adr/0006-postgis-para-busqueda-geografica.md`; `docs/api.md` §5.2.
 
 ## 1. Alcance
 
-Esta entrega incorpora el **esquema persistente** de la configuración
-administrativa:
+Esta entrega incorpora el esquema persistente de la configuración
+administrativa y de las cotizaciones:
 
 1. zonas de demanda (RF-23);
 2. tarifas versionadas (RF-23);
-3. reglas de multiplicador versionadas (RF-23 + RF-16).
+3. reglas de multiplicador versionadas (RF-23 + RF-16);
+4. cotizaciones inmutables y el precio fijado en `viajes` (ADR-0005, RF-17 a
+   RF-19).
 
-No incluye todavía cotizaciones, la modificación de `viajes` para guardar
-`cotizacion_id` y `multiplicador_fijado`, los casos de uso, las rutas HTTP ni los
-repositorios. Esas piezas pertenecen a las tarjetas de cotización y confirmación
-y se apoyan en este esquema.
+Sobre ese esquema se implementaron los repositorios, los casos de uso, las rutas
+HTTP y el seed. No se agrega tabla de mediciones: los conteos y las versiones
+usadas se guardan dentro de cada cotización. `POST /viajes` se conserva como ruta
+legacy; el flujo nuevo es `POST /cotizaciones` →
+`POST /cotizaciones/{id}/confirmar`.
 
 ## 2. Contexto: actualización de la base
 
@@ -61,6 +67,7 @@ un solo lugar.
 | `db/migrations/008_zonas_de_demanda.sql` | Tabla `zonas_de_demanda` con área PostGIS, índice GiST, unicidad de nombre, bloqueo de borrado y control de solapamiento (I16). |
 | `db/migrations/009_tarifas.sql` | Tabla `tarifas`, restricciones de importes, índices de versión y trigger de ciclo de vida. |
 | `db/migrations/010_reglas_multiplicador.sql` | Tabla `reglas_multiplicador`, restricciones de umbrales y escala, índices y trigger. |
+| `db/migrations/011_cotizaciones.sql` | Tabla `cotizaciones` con foto del cálculo, columnas `cotizacion_id` y `multiplicador_fijado` en `viajes`, índices y trigger de inmutabilidad. |
 
 Todas son idempotentes: usan `CREATE TABLE IF NOT EXISTS`,
 `CREATE INDEX IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION` y
@@ -95,10 +102,10 @@ tampoco se permite compartir solamente un borde: un punto del borde pertenece a
 ambas zonas según `ST_Covers`. El chequeo toma un bloqueo de asesoría para
 serializar altas concurrentes.
 
-**Mapeo con la API:** `docs/api.md` muestra `criterio` como documento JSON. En la
-base, ese criterio se representa con `area`; el futuro adaptador HTTP puede
-exponerlo con `ST_AsGeoJSON(area::geometry)` al leer y convertir el polígono
-recibido con `ST_GeogFromText` o `ST_GeomFromGeoJSON` al escribir. No se guardan
+**Mapeo con la API:** `docs/api.md` muestra `criterio` como
+`{ "tipo": "POLIGONO", "puntos": [...] }`. En la base, ese criterio se representa
+con `area`; el repositorio PostgreSQL convierte el polígono recibido a
+`geography(Polygon, 4326)` al escribir y arma el criterio al leer. No se guardan
 dos copias del mismo criterio.
 
 ### 5.2 `tarifas`
@@ -165,8 +172,29 @@ falla, la versión no se consume: el siguiente intento vuelve a calcular el
 consecutivo.
 
 Para evitar diferencias entre el reloj de la aplicación y el de PostgreSQL, el
-caso de uso debe informar `publicada_en` con el mismo `Reloj` con el que creó
-`creada_en` y validó `vigente_desde`. Si se omite, la base usa `NOW()`.
+caso de uso informa `publicada_en` con el mismo `Reloj` con el que creó
+`creada_en` y fijó `vigenteDesde`; la base solo usa `NOW()` como respaldo.
+
+### 5.5 `cotizaciones` y `viajes`
+
+| Columna o restricción | Regla |
+| --- | --- |
+| `id`, `pasajero_id`, `zona_id`, `regla_id`, `tarifa_id` | Clave primaria y referencias a usuarios, zonas, reglas y tarifas. |
+| `origen_lat/lng`, `destino_lat/lng` | Coordenadas con rango válido. |
+| `distancia_estimada_m`, `tiempo_estimado_s` | Distancia positiva en metros y tiempo no negativo en segundos. |
+| `solicitudes_usadas`, `choferes_disponibles_usados` | Conteos de la medición, enteros no negativos. |
+| `regla_version`, `tarifa_version` | Versiones usadas, ambas mayores que 0. |
+| `multiplicador`, `precio_centavos` | `NUMERIC(6,4) >= 1` y monto entero en centavos. |
+| `parametros_conteo` | `JSONB` con la ventana, la zona y el resto de entradas del conteo. |
+| `calculada_en`, `vence_en`, `estado` | `vence_en > calculada_en`; estados `VIGENTE`, `CONFIRMADA` o `VENCIDA`. |
+| Índices | `cotizaciones_pasajero_id_idx`, `cotizaciones_zona_calculada_idx` y `cotizaciones_estado_vence_idx`. |
+| `viajes.cotizacion_id`, `viajes.multiplicador_fijado` | FK y `UNIQUE` sobre la cotización; multiplicador `NUMERIC(6,4) >= 1` con default `1.0000` para viajes históricos. |
+
+El trigger `cotizaciones_proteger()` rechaza cualquier cambio de los datos de la
+foto; solo permite `VIGENTE → CONFIRMADA` o `VIGENTE → VENCIDA`. Tampoco permite
+`DELETE` si la cotización ya generó un viaje. Como no hay tabla de mediciones,
+`parametros_conteo` más los conteos, las versiones y las coordenadas permiten
+reconstruir el precio calculado.
 
 ## 6. Ciclo de vida
 
@@ -276,7 +304,8 @@ correcta es crear otro borrador y publicarlo.
 
 La suite de integración con PostgreSQL real verifica:
 
-- que las migraciones son idempotentes y crean las tablas e índices esperados;
+- que las migraciones son idempotentes y crean las tablas e índices esperados,
+  incluidos `cotizaciones` y los de `viajes`;
 - que una zona se puede desactivar pero no borrar;
 - que dos zonas activas no se solapan ni comparten borde;
 - que dos altas concurrentes de zonas superpuestas dejan una sola activa;
@@ -284,40 +313,60 @@ La suite de integración con PostgreSQL real verifica:
   modificar después de publicada;
 - que una regla valida umbrales, mínimo, máximo, escala y fórmula;
 - que ocho publicaciones concurrentes de tarifas obtienen las versiones 1 a 8
-  sin colisiones.
+  sin colisiones;
+- que la foto de una cotización es inmutable y que no se puede borrar una
+  cotización que ya generó un viaje;
+- que la confirmación condicional fija precio y multiplicador y es idempotente.
 
-Comando:
+Comandos:
 
 ```bash
 pnpm test:integration:db
+pnpm verificar
 ```
 
-Archivo nuevo: `tests/integration/postgres/configuracion-administrativa.test.js`.
+Archivos: `tests/integration/postgres/configuracion-administrativa.test.js` y
+`tests/integration/postgres/cotizaciones.test.js`.
 
-La misma suite se ejecutó el 2026-11-20 sobre una copia temporal de `origin/main`
-(`3c8591b`) con exactamente los mismos archivos: 178/178 pruebas generales y
-22/22 de integración, sin conflictos.
+### Resultados del 2026-11-20
 
-## 9. Fuera de alcance y siguientes pasos
+| Comando | Resultado |
+| --- | --- |
+| `pnpm test` | 207/207 pruebas; 3 suites PostgreSQL omitidas sin `TEST_DATABASE_URL`. |
+| `pnpm test:integration:db` | 25/25 pruebas (22 de esquema y concurrencia + 3 de cotizaciones). |
+| `pnpm verificar` | 15 casos OK, 0 fallas, 3 omitidos. |
 
-1. **Cotizaciones:** tabla `cotizaciones`, columnas `cotizacion_id` y
-   `multiplicador_fijado` en `viajes`, según ADR-0005.
-2. **Repositorios PostgreSQL** para zonas, tarifas y reglas.
-3. **Casos de uso y rutas HTTP** de `docs/api.md` §5.2, incluyendo la conversión
-   entre `criterio` JSON y `area` PostGIS.
-4. **Carga inicial:** un seed de zona, tarifa y regla publicadas para desarrollo.
-5. **Autorización de publicación:** validar en el caso de uso que
-   `publicada_por_id` corresponda a un `ADMINISTRADOR`. La base solo verifica la
-   existencia del usuario.
+La suite de integración se ejecutó también sobre una copia temporal de
+`origin/main` (`3c8591b`) con los mismos archivos de esta entrega, sin
+conflictos. El runner levanta `postgis/postgis:15-3.4-alpine`, aplica las once
+migraciones en orden y baja el contenedor al terminar.
+
+## 9. Ya incluido en esta entrega
+
+Las piezas que antes figuraban como futuro quedaron implementadas:
+
+1. **Cotizaciones:** migración `011`, tabla `cotizaciones`, columnas
+   `cotizacion_id` y `multiplicador_fijado` en `viajes` (ADR-0005, §5.5).
+2. **Repositorios PostgreSQL** para zonas, tarifas, reglas y cotizaciones, con
+   conversión entre `criterio` JSON y `area` PostGIS.
+3. **Casos de uso y rutas HTTP** de `docs/api.md` §5.2 y §5.3.
+4. **Carga inicial:** `scripts/seed.js` publica una zona `Centro`, una tarifa y
+   una regla; el `GET /ready` incluye los cuatro almacenes nuevos.
+5. **Autorización de publicación:** `validarAdministrador` se ejecuta en el caso
+   de uso, además del middleware de rol HTTP.
+
+Sigue pendiente: retirar `POST /viajes` cuando los clientes migren al flujo de
+cotización y decidir si el `OPERADOR_SOPORTE` debe poder leer la configuración
+para explicar precios.
 
 ## 10. Referencias
 
-- `db/migrations/007_funciones_configuracion_versionada.sql`
-- `db/migrations/008_zonas_de_demanda.sql`
-- `db/migrations/009_tarifas.sql`
-- `db/migrations/010_reglas_multiplicador.sql`
+- `db/migrations/007_funciones_configuracion_versionada.sql` a
+  `db/migrations/011_cotizaciones.sql`
 - `tests/integration/postgres/configuracion-administrativa.test.js`
+- `tests/integration/postgres/cotizaciones.test.js`
 - `docs/rf23-rf16-requerimientos-y-cambios.md`
+- `docs/api.md` §5.2 y §5.3
 - `docs/modelo.md` §4.5 a §4.7 y §7.1
 - `docs/adr/0005-cotizacion-inmutable-para-precio-dinamico.md`
 - `docs/adr/0006-postgis-para-busqueda-geografica.md`

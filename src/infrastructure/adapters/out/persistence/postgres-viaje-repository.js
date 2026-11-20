@@ -1,11 +1,12 @@
-import { Viaje } from '../../../../domain/entities/viaje.js';
+import { ESTADOS_DEMANDA_ACTIVA, Viaje } from '../../../../domain/entities/viaje.js';
 import { ErrorDeDominio } from '../../../../domain/errors/error-de-dominio.js';
 import { PuntoGeografico } from '../../../../domain/value-objects/punto-geografico.js';
 
 const CAMPOS = `
   id, pasajero_id, origen_lat, origen_lng, destino_lat, destino_lng,
-  distancia_estimada_m, precio_fijado_centavos, chofer_id, estado,
-  solicitado_en, asignado_en, cerrado_en, cancelado_por_id, motivo_cancelacion
+  distancia_estimada_m, precio_fijado_centavos, cotizacion_id, multiplicador_fijado,
+  chofer_id, estado, solicitado_en, asignado_en, cerrado_en, cancelado_por_id,
+  motivo_cancelacion
 `;
 
 /**
@@ -25,10 +26,11 @@ export class PostgresViajeRepository {
     await this.#ejecutor(ejecutor).query(
       `INSERT INTO viajes (
          id, pasajero_id, origen_lat, origen_lng, destino_lat, destino_lng,
-         distancia_estimada_m, precio_fijado_centavos, chofer_id, estado,
-         solicitado_en, asignado_en, cerrado_en, cancelado_por_id, motivo_cancelacion
+         distancia_estimada_m, precio_fijado_centavos, cotizacion_id,
+         multiplicador_fijado, chofer_id, estado, solicitado_en, asignado_en,
+         cerrado_en, cancelado_por_id, motivo_cancelacion
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
        )`,
       [
         viaje.id,
@@ -39,6 +41,8 @@ export class PostgresViajeRepository {
         viaje.destino.lng,
         viaje.distanciaEstimadaM,
         viaje.precioFijadoCentavos,
+        viaje.cotizacionId,
+        viaje.multiplicadorFijado,
         viaje.choferId,
         viaje.estado,
         viaje.solicitadoEn,
@@ -107,6 +111,18 @@ export class PostgresViajeRepository {
     return rows.map(mapearViaje);
   }
 
+  async listarActivosDesde(desde, ejecutor) {
+    const { rows } = await this.#ejecutor(ejecutor).query(
+      `SELECT ${CAMPOS}
+         FROM viajes
+        WHERE estado = ANY($1::varchar[])
+          AND solicitado_en >= $2`,
+      [[...ESTADOS_DEMANDA_ACTIVA], desde],
+    );
+
+    return rows.map(mapearViaje);
+  }
+
   async verificarDisponibilidad() {
     try {
       await this.#baseDeDatos.query('SELECT 1 FROM viajes LIMIT 1');
@@ -135,6 +151,8 @@ function mapearViaje(fila) {
     }),
     distanciaEstimadaM: fila.distancia_estimada_m,
     precioFijadoCentavos: fila.precio_fijado_centavos,
+    cotizacionId: fila.cotizacion_id,
+    multiplicadorFijado: fila.multiplicador_fijado ?? '1.0000',
     choferId: fila.chofer_id,
     estado: fila.estado,
     solicitadoEn: fila.solicitado_en,

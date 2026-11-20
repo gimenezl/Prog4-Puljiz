@@ -1,5 +1,7 @@
-import { ESTADOS_VIAJE } from '../../../../domain/entities/viaje.js';
+import { ESTADOS_DEMANDA_ACTIVA, ESTADOS_VIAJE } from '../../../../domain/entities/viaje.js';
 import { ErrorDeDominio } from '../../../../domain/errors/error-de-dominio.js';
+
+const ESTADOS_ACTIVOS = new Set(ESTADOS_DEMANDA_ACTIVA);
 
 /**
  * Adaptador falso del puerto RepositorioViajes. Las entidades son inmutables,
@@ -40,6 +42,13 @@ export class InMemoryViajeRepository {
         return diferencia !== 0 ? diferencia : a.id.localeCompare(b.id);
       })
       .slice(0, limite);
+  }
+
+  async listarActivosDesde(desde, _ejecutor) {
+    return [...this.#porId.values()].filter(
+      (viaje) =>
+        ESTADOS_ACTIVOS.has(viaje.estado) && viaje.solicitadoEn.getTime() >= desde.getTime(),
+    );
   }
 
   async verificarDisponibilidad() {

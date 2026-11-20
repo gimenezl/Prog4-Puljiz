@@ -40,6 +40,18 @@ export class PostgresUbicacionRepository {
     return rows[0] ? mapearUbicacion(rows[0]) : null;
   }
 
+  async listar(ejecutor) {
+    const { rows } = await this.#ejecutor(ejecutor).query(
+      `SELECT chofer_id,
+              ST_Y(posicion::geometry) AS lat,
+              ST_X(posicion::geometry) AS lng,
+              actualizada_en
+         FROM ubicaciones_vigentes`,
+    );
+
+    return rows.map(mapearUbicacion);
+  }
+
   async verificarDisponibilidad() {
     try {
       await this.#baseDeDatos.query('SELECT 1 FROM ubicaciones_vigentes LIMIT 1');

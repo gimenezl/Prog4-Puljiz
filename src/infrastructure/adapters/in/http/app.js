@@ -12,6 +12,8 @@ import { crearLimitador } from './middlewares/rate-limit.js';
 import { createRequestContextMiddleware } from './middlewares/request-context.js';
 import { createAuthRouter } from './routes/auth.routes.js';
 import { createChoferesRouter } from './routes/choferes.routes.js';
+import { createConfiguracionRouter } from './routes/configuracion.routes.js';
+import { createCotizacionesRouter } from './routes/cotizaciones.routes.js';
 import { createHealthRouter } from './routes/health.routes.js';
 import { createUsuariosRouter } from './routes/usuarios.routes.js';
 import { createViajesRouter } from './routes/viajes.routes.js';
@@ -26,6 +28,8 @@ export function createHttpApp({
   auth,
   viajes,
   choferes,
+  cotizaciones,
+  configuracion,
   corsOrigin = '*',
   bodyLimit = '100kb',
   rateLimit: opcionesRateLimit = {},
@@ -113,6 +117,28 @@ export function createHttpApp({
         createChoferesRouter({
           ...choferes,
           autenticacionRequerida,
+        }),
+      );
+    }
+
+    if (cotizaciones) {
+      app.use(
+        '/cotizaciones',
+        createCotizacionesRouter({
+          ...cotizaciones,
+          autenticacionRequerida,
+          limitadorViajes,
+        }),
+      );
+    }
+
+    if (configuracion) {
+      app.use(
+        '/admin/configuracion',
+        createConfiguracionRouter({
+          ...configuracion,
+          autenticacionRequerida,
+          limitadorViajes,
         }),
       );
     }

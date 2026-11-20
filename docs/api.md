@@ -2,7 +2,7 @@
 
 > **Grupo 7 · Programación IV (UTN)** · Tarjeta «E0 · Contrato de API y permisos»
 >
-> **Estado:** propuesta en revisión. Los endpoints **existentes** están documentados tal como funcionan hoy en `main` y sus ejemplos son respuestas reales de la aplicación levantada con Docker (`docker compose up --build` y `pnpm db:seed`). Los endpoints **propuestos** todavía no existen: están marcados «Propuesto — tarjeta X» y son el acuerdo previo para programarlos.
+> **Estado:** este contrato ya incluye la configuración administrativa y el flujo de cotización implementados en la rama E2 (§5.2 y §5.3). Los endpoints **existentes** están documentados tal como funcionan hoy y sus ejemplos son respuestas reales de la aplicación levantada con Docker (`docker compose up --build` y `pnpm db:seed`). Los endpoints **propuestos** todavía no existen: están marcados «Propuesto — tarjeta X» y son el acuerdo previo para programarlos.
 >
 > **Alcance:** variante de **precio dinámico**. No hay flotas, cupos ni administradores de flota.
 
@@ -30,7 +30,7 @@
 | **Autenticación** | `Authorization: Bearer <JWT>`, obtenido en `POST /auth/login` (ADR-0003). El esquema `Bearer` no distingue mayúsculas. El token vence a los `JWT_EXPIRES_IN_MINUTES` minutos (60 por defecto) y no hay refresh token. |
 | **Identificadores** | UUID generados por el servidor. Un identificador de ruta que no es UUID se rechaza con `400 DATOS_INVALIDOS`. |
 | **Montos** | Enteros en **centavos**, con sufijo `Centavos` en el nombre del campo (por ejemplo, `precioFijadoCentavos`). Nunca punto flotante. **El cliente nunca envía importes.** |
-| **Multiplicador** | Texto decimal de escala fija (por ejemplo, `"1.25"`), para no perder precisión. Todavía no existe en el código. |
+| **Multiplicador** | Texto decimal de escala fija (por ejemplo, `"1.25"`), para no perder precisión. Lo calcula el servidor al cotizar y queda guardado en la cotización y en el viaje. |
 | **Distancias y tiempos** | Metros enteros (sufijo `M`) y segundos enteros (sufijo `S`). |
 | **Fechas** | ISO-8601 en UTC con milisegundos y `Z` (por ejemplo, `2026-11-12T00:18:36.675Z`). La hora la fija siempre el servidor. |
 | **Coordenadas** | Objeto `{ "lat": número, "lng": número }`, con `lat` entre −90 y 90 y `lng` entre −180 y 180. |
@@ -73,7 +73,7 @@ En los ejemplos de este documento, los UUID, tokens y `requestId` reales se reem
 
 ### 2.1 Códigos del dominio (`error-mapping.js`)
 
-Esta tabla coincide exactamente con `ESTADOS_HTTP_POR_CODIGO` en `src/infrastructure/adapters/in/http/error-mapping.js`. Los marcados *(previsto)* ya tienen su estado HTTP reservado pero ningún caso de uso los lanza todavía.
+Esta tabla coincide exactamente con `ESTADOS_HTTP_POR_CODIGO` en `src/infrastructure/adapters/in/http/error-mapping.js`. Con la excepción marcada *(previsto, E3)*, todos los códigos están implementados y pueden ser lanzados por un caso de uso, una entidad o un repositorio.
 
 | Código | HTTP | Cuándo ocurre |
 |---|---:|---|
@@ -90,12 +90,16 @@ Esta tabla coincide exactamente con `ESTADOS_HTTP_POR_CODIGO` en `src/infrastruc
 | `CHOFER_OCUPADO` | 409 | El chofer ya tiene un viaje activo. |
 | `PATENTE_YA_REGISTRADA` | 409 | La patente ya pertenece al vehículo de otro chofer. |
 | `CHOFER_SIN_VEHICULO` | 409 | Se intenta habilitar a un chofer que no registró un vehículo. |
-| `COTIZACION_YA_CONFIRMADA` | 409 | *(previsto, E2)* La cotización ya generó un viaje. |
-| `CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO` | 409 | Se reutilizó una `Idempotency-Key` vigente con un cuerpo distinto (§3). |
+| `COTIZACION_YA_CONFIRMADA` | 409 | La cotización ya generó un viaje con otra clave de idempotencia. |
+| `CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO` | 409 | Se reutilizó una `Idempotency-Key` vigente con otro contenido (otra cotización, otro viaje o distinto cuerpo). |
 | `CLAVE_DE_IDEMPOTENCIA_REQUERIDA` | 400 | Falta la cabecera `Idempotency-Key` (o está vacía) en una operación que la exige. |
 | `OFERTA_VENCIDA` | 410 | *(previsto, E3)* La oferta venció: `ahora` es mayor o igual que `venceEn`. |
-| `COTIZACION_VENCIDA` | 410 | *(previsto, E2)* La cotización venció antes de confirmarla. |
-| `FUERA_DE_COBERTURA` | 422 | *(previsto, E2)* El origen de la cotización no pertenece a ninguna zona activa. |
+| `COTIZACION_VENCIDA` | 410 | La cotización venció antes de confirmarla. |
+| `VERSION_YA_PUBLICADA` | 409 | Se intenta editar o volver a publicar una tarifa o regla publicada (I12). |
+| `ZONAS_SUPERPUESTAS` | 409 | Una zona activa nueva o modificada se solapa con otra (I16). |
+| `NOMBRE_YA_REGISTRADO` | 409 | Ya existe una zona con el mismo nombre, sin distinguir mayúsculas. |
+| `CONFIGURACION_INCOMPLETA` | 503 | Falta una tarifa o una regla publicada y vigente para cotizar. |
+| `FUERA_DE_COBERTURA` | 422 | El origen de la cotización no pertenece a ninguna zona activa. |
 
 Un `ErrorDeDominio` con un código que **no** está en esta tabla se responde como `500 ERROR_INTERNO`. Por eso cada código nuevo de las próximas tarjetas se registra primero en `error-mapping.js`.
 
@@ -119,9 +123,6 @@ Todavía **no** están en `error-mapping.js`. La tarjeta que los use debe agrega
 
 | Código propuesto | HTTP | Cuándo | Tarjeta |
 |---|---:|---|---|
-| `CONFIGURACION_INCOMPLETA` | 503 | No hay regla de multiplicador o tarifa vigente para cotizar (`docs/modelo.md` §4.6). | E2 · RF-23 + RF-16 |
-| `VERSION_YA_PUBLICADA` | 409 | Se intenta editar o volver a publicar una regla o tarifa ya publicada (I12). | E2 · RF-23 + RF-16 |
-| `ZONAS_SUPERPUESTAS` | 409 | Una zona activa nueva o modificada se solapa con otra (I16). | E2 · RF-23 + RF-16 |
 | `UBICACION_NO_DISPONIBLE` | 404 | Se consulta la ubicación de un viaje sin ubicación vigente del chofer. | E4 · tiempo real |
 | `SERVICIO_NO_DISPONIBLE` | 503 | El servicio Python no respondió dentro del tiempo máximo (ADR-0007). | E4 · parte Python |
 
@@ -133,26 +134,26 @@ Todavía **no** están en `error-mapping.js`. La tarjeta que los use debe agrega
 
 | Aspecto | Regla |
 |---|---|
-| **Operaciones que la exigen hoy** | `POST /viajes` y `POST /viajes/{id}/finalizar`. La política detallada está en `docs/politica-de-idempotencia.md`. |
+| **Operaciones que la exigen hoy** | `POST /viajes`, `POST /viajes/{id}/finalizar` y `POST /cotizaciones/{id}/confirmar`. La política detallada está en `docs/politica-de-idempotencia.md`. |
 | **Cabecera** | `Idempotency-Key: <texto>`. Obligatoria y no vacía; sin ella se responde `400 CLAVE_DE_IDEMPOTENCIA_REQUERIDA`. Se recomienda un UUID v4 generado por el cliente. Longitud máxima efectiva: 255 caracteres (ver §8, D18). |
-| **Alcance** | Usuario más operación: `viaje:crear:<pasajeroId>` y `viaje:finalizar:<choferId>`. La misma clave usada por dos usuarios distintos son dos claves distintas. |
-| **Contenido comparado** | Huella SHA-256 del contenido normalizado, con las claves ordenadas: `origen` y `destino` al crear; `viajeId` al finalizar. El orden de las propiedades del JSON no importa. La clave no forma parte de la huella. |
-| **Atomicidad** | La clave se registra en la **misma transacción** que el efecto (el viaje creado, o el viaje finalizado con su cobro). Dos solicitudes simultáneas con la misma clave producen un solo efecto y reciben la misma respuesta (ADR-0004, C5). |
+| **Alcance** | Usuario más operación: `viaje:crear:<pasajeroId>`, `viaje:finalizar:<choferId>` y `cotizacion:confirmar:<pasajeroId>`. La misma clave usada por dos usuarios distintos son dos claves distintas. |
+| **Contenido comparado** | Huella SHA-256 del contenido normalizado, con las claves ordenadas: `origen` y `destino` al crear; `viajeId` al finalizar; `cotizacionId` y `pasajeroId` al confirmar. El orden de las propiedades del JSON no importa. La clave no forma parte de la huella. |
+| **Atomicidad** | La clave se registra en la **misma transacción** que el efecto (el viaje creado, el viaje finalizado con su cobro, o la cotización confirmada con el viaje resultante). Dos solicitudes simultáneas con la misma clave producen un solo efecto y reciben la misma respuesta (ADR-0004, C5 y ADR-0005). |
 | **Vigencia** | `IDEMPOTENCIA_TTL_MS`: 24 horas por defecto (configurable entre 1 minuto y 7 días). Pasado ese plazo la clave se olvida y una nueva solicitud con la misma clave crea otro viaje. |
 | **Misma clave y mismo contenido** | `200 OK` con la cabecera `Idempotency-Replayed: true` y **la respuesta original guardada**, aunque el viaje haya cambiado de estado después. Para el estado actual se usa `GET /viajes/{id}`. |
 | **Misma clave y otro contenido** | `409 CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO`. No se crea nada. |
 | **Orden de validación** | Autenticación → rol → esquema del cuerpo → cabecera `Idempotency-Key` → reglas del dominio. Un cuerpo inválido sin clave responde `DATOS_INVALIDOS`, no `CLAVE_DE_IDEMPOTENCIA_REQUERIDA`. |
 
-### 3.2 Operaciones futuras
+### 3.2 Operaciones con clave y operaciones futuras
 
 | Operación | Exige clave | Estado |
 |---|---|---|
-| `POST /cotizaciones/{id}/confirmar` | Sí. Alcance `cotizacion:confirmar:<pasajeroId>`. | **Propuesto — tarjeta E2 · RF-04 + RF-17 + RF-05 + RF-18 + RF-19** |
+| `POST /cotizaciones/{id}/confirmar` | Sí. Alcance `cotizacion:confirmar:<pasajeroId>`, huella de `cotizacionId` + `pasajeroId`. | Implementado — tarjeta E2 · RF-17 + RF-18 + RF-19 |
 | Cobro simulado | Ya existe: se ejecuta dentro de `POST /viajes/{id}/finalizar`, protegido por su clave y por `viaje_id` único en `cobros_simulados` (§4.4). | Implementado |
 | Aceptar o rechazar oferta, cancelar, avanzar el viaje | No. Son idempotentes por su clave natural: repetirlas no duplica efectos, la segunda recibe `OFERTA_NO_PENDIENTE` o `TRANSICION_INVALIDA` (`docs/modelo.md` Q8). | Propuesto |
-| Cotizar | No. Cada cotización es una foto nueva y no tiene efectos sobre otros recursos. | Propuesto |
+| Cotizar | No. Cada cotización es una foto nueva y no tiene efectos sobre otros recursos. | Implementado |
 
-En todas las operaciones con clave se mantienen las mismas reglas de §3.1 (alcance por usuario, huella del cuerpo, misma transacción, `Idempotency-Replayed`).
+Confirmar no recibe importes del cliente: la huella protege la identidad de la cotización y el pasajero, y la respuesta guardada contiene el viaje con el precio ya fijado. En todas las operaciones con clave se mantienen las mismas reglas de §3.1 (alcance por usuario, huella, misma transacción, `Idempotency-Replayed`).
 
 ---
 
@@ -498,6 +499,11 @@ El perfil operativo de chofer tiene esta forma en todas las respuestas:
 
 ### 4.4 Viajes (`/viajes`)
 
+`POST /viajes` se conserva como **ruta legacy/provisional**: crea el viaje con la
+tarifa anterior, sin cotización ni multiplicador. El flujo nuevo es
+`POST /cotizaciones` → `POST /cotizaciones/{id}/confirmar` (§5.3), que fija el
+precio que vio el pasajero. Los viajes ya confirmados **no se recalculan**.
+
 Forma del viaje en todas las respuestas:
 
 | Campo | Descripción |
@@ -505,7 +511,8 @@ Forma del viaje en todas las respuestas:
 | `id`, `pasajeroId` | Identidad del viaje y de su pasajero. |
 | `origen`, `destino` | Coordenadas. |
 | `distanciaEstimadaM` | Distancia en línea recta (Haversine), en metros. |
-| `precioFijadoCentavos` | Precio fijado al crear el viaje. Hoy es la **tarifa provisional por distancia**, sin multiplicador (§8, D1). |
+| `precioFijadoCentavos` | Precio fijado al crear el viaje. Al confirmar una cotización se **copia** de ella; `POST /viajes` sigue usando la tarifa provisional por distancia (§8, D1). |
+| `cotizacionId`, `multiplicadorFijado` | Cotización de origen y multiplicador copiado al confirmar (ADR-0005). Son `null` y `"1.0000"` en los viajes creados con `POST /viajes`. |
 | `choferId` | Chofer asignado o `null`. Se conserva como historial si el viaje se cancela. |
 | `estado` | Hoy solo `SOLICITADO`, `ASIGNADO`, `FINALIZADO` o `CANCELADO_POR_PASAJERO` son alcanzables por la API. |
 | `solicitadoEn`, `asignadoEn`, `cerradoEn` | Instantes de cada etapa. |
@@ -536,6 +543,8 @@ Forma del viaje en todas las respuestas:
     "destino": { "lat": -34.5889, "lng": -58.4306 },
     "distanciaEstimadaM": 4777,
     "precioFijadoCentavos": 338850,
+    "cotizacionId": null,
+    "multiplicadorFijado": "1.0000",
     "choferId": null,
     "estado": "SOLICITADO",
     "solicitadoEn": "2026-11-12T00:18:36.675Z",
@@ -578,6 +587,8 @@ Con la tarifa por defecto: `100000 + round(4,777 km × 50000) = 338850`, acotado
       "destino": { "lat": -34.5889, "lng": -58.4306 },
       "distanciaEstimadaM": 4777,
       "precioFijadoCentavos": 338850,
+      "cotizacionId": null,
+      "multiplicadorFijado": "1.0000",
       "choferId": null,
       "estado": "SOLICITADO",
       "solicitadoEn": "2026-11-12T00:18:36.675Z",
@@ -627,6 +638,8 @@ Con la tarifa por defecto: `100000 + round(4,777 km × 50000) = 338850`, acotado
     "destino": { "lat": -34.5889, "lng": -58.4306 },
     "distanciaEstimadaM": 4777,
     "precioFijadoCentavos": 338850,
+    "cotizacionId": null,
+    "multiplicadorFijado": "1.0000",
     "choferId": "7c9e4b21-2d3f-4a8b-b6c5-1e0f9d8a2b02",
     "estado": "ASIGNADO",
     "solicitadoEn": "2026-11-12T00:18:36.675Z",
@@ -673,6 +686,8 @@ Después, `GET /choferes/yo` devuelve `"viajeActivoId": "5d2e8f14-…"` y `"esta
     "destino": { "lat": -34.5889, "lng": -58.4306 },
     "distanciaEstimadaM": 4777,
     "precioFijadoCentavos": 338850,
+    "cotizacionId": null,
+    "multiplicadorFijado": "1.0000",
     "choferId": "7c9e4b21-2d3f-4a8b-b6c5-1e0f9d8a2b02",
     "estado": "CANCELADO_POR_PASAJERO",
     "solicitadoEn": "2026-11-12T00:18:36.675Z",
@@ -711,6 +726,8 @@ Después, `GET /choferes/yo` devuelve `"viajeActivoId": "5d2e8f14-…"` y `"esta
     "destino": { "lat": -34.5889, "lng": -58.4306 },
     "distanciaEstimadaM": 4777,
     "precioFijadoCentavos": 338850,
+    "cotizacionId": null,
+    "multiplicadorFijado": "1.0000",
     "choferId": "7c9e4b21-2d3f-4a8b-b6c5-1e0f9d8a2b02",
     "estado": "FINALIZADO",
     "solicitadoEn": "2026-11-18T22:40:14.779Z",
@@ -803,6 +820,10 @@ Cualquier método o ruta no declarados responde:
     "cobros": { "ok": true },
     "vehiculos": { "ok": true },
     "ubicaciones": { "ok": true },
+    "zonas": { "ok": true },
+    "tarifas": { "ok": true },
+    "reglas": { "ok": true },
+    "cotizaciones": { "ok": true },
     "idempotencia": { "ok": true },
     "reloj": { "ok": true }
   },
@@ -816,7 +837,7 @@ Cualquier método o ruta no declarados responde:
 
 ## 5. Endpoints propuestos
 
-Ninguno de estos endpoints existe todavía. Cada tarjeta puede ajustar nombres o campos, pero cualquier cambio se refleja aquí en el mismo PR. Valen las convenciones de §1: esquemas estrictos, sin importes del cliente, montos en centavos, multiplicador como texto, fechas en UTC.
+Los bloques §5.2 y §5.3 ya están **implementados** en la rama E2; el resto sigue propuesto. Cada tarjeta puede ajustar nombres o campos, pero cualquier cambio se refleja aquí en el mismo PR. Valen las convenciones de §1: esquemas estrictos, sin importes del cliente, montos en centavos, multiplicador como texto, fechas en UTC.
 
 ### 5.1 Cuentas del personal
 
@@ -830,104 +851,111 @@ Ninguno de estos endpoints existe todavía. Cada tarjeta puede ajustar nombres o
 
 ### 5.2 Zonas, tarifas y reglas de multiplicador
 
-Todas: **Propuesto — tarjeta E2 · RF-23 + RF-16**. Escribe solo el `ADMINISTRADOR`; el `OPERADOR_SOPORTE` puede leer para explicar un precio (`docs/modelo.md` §3).
+**Implementado — tarjeta E2 · RF-23 + RF-16.** Montado en `/admin/configuracion`.
+**Solo `ADMINISTRADOR`**, tanto para leer como para escribir: lo comprueba el
+middleware de rol y lo vuelve a validar el caso de uso. No hay
+`GET /zonas/{id}` ni `GET /zonas/{id}/multiplicador`: la medición de demanda se
+guarda como parte de cada cotización (§5.3).
 
-#### `GET /zonas` y `GET /zonas/{id}`
+El `criterio` de una zona es `{ "tipo": "POLIGONO", "puntos": [{ "lat", "lng" }, …] }`
+(mínimo tres puntos) y se convierte a `geography(Polygon, 4326)` en PostgreSQL,
+según ADR-0006. Las zonas no se borran: se desactivan.
 
-- **Roles:** `OPERADOR_SOPORTE`, `ADMINISTRADOR`.
-- **Parámetros de consulta:** `activa` (`true` o `false`, opcional).
-- **Éxito:** `200 OK`
+#### `GET /admin/configuracion/zonas`
 
-```json
-{
-  "zonas": [
-    {
-      "id": "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a20",
-      "nombre": "Microcentro",
-      "criterio": { "tipo": "POLIGONO", "puntos": [{ "lat": -34.60, "lng": -58.38 }, "…"] },
-      "activa": true,
-      "creadaEn": "2026-11-15T12:00:00.000Z"
-    }
-  ]
-}
-```
+- **Éxito:** `200 OK` con `{ "zonas": [ { "id", "nombre", "criterio", "activa", "creadaEn" } ] }`.
+- **Errores:** `401 NO_AUTENTICADO`, `403 NO_AUTORIZADO`.
 
-El formato de `criterio` lo fija el ADR de búsqueda geográfica (ADR-0006).
+#### `POST /admin/configuracion/zonas`
 
-#### `POST /zonas` y `PATCH /zonas/{id}`
+- **Cuerpo:** `{ "nombre", "criterio" }`; `activa` es opcional y por defecto `true`.
+- **Éxito:** `201 Created` con `{ "zona": { … } }`.
+- **Errores:** `400 DATOS_INVALIDOS`, `409 NOMBRE_YA_REGISTRADO`, `409 ZONAS_SUPERPUESTAS`.
 
-- **Roles:** `ADMINISTRADOR`.
-- **Cuerpo:** `{ "nombre", "criterio" }` al crear; `{ "nombre"?, "criterio"?, "activa"? }` al modificar. Las zonas no se borran: se desactivan.
-- **Éxito:** `201 Created` o `200 OK` con `{ "zona": { … } }`.
-- **Errores:** `400 DATOS_INVALIDOS`, `403 NO_AUTORIZADO`, `404 NO_ENCONTRADO`, `409 ZONAS_SUPERPUESTAS` (propuesto).
+#### `PATCH /admin/configuracion/zonas/{id}`
 
-#### `GET /zonas/{id}/multiplicador`
+- **Cuerpo:** al menos uno de `{ "nombre"?, "criterio"?, "activa"? }`. Permite
+  desactivar (`"activa": false`) y reactivar la zona.
+- **Éxito:** `200 OK` con `{ "zona": { … } }`.
+- **Errores:** `400 DATOS_INVALIDOS`, `404 NO_ENCONTRADO`, `409 NOMBRE_YA_REGISTRADO`,
+  `409 ZONAS_SUPERPUESTAS`.
 
-- **Roles:** `OPERADOR_SOPORTE`, `ADMINISTRADOR`.
-- **Descripción:** última medición de demanda de la zona y su multiplicador (`MultiplicadorDeZona`). Si el multiplicador se calcula al cotizar (ADR-0005, A1), devuelve el de la última cotización de la zona.
-- **Éxito:** `200 OK`
+#### Tarifas: `/admin/configuracion/tarifas`
 
-```json
-{
-  "medicion": {
-    "zonaId": "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a20",
-    "reglaVersion": 3,
-    "solicitudes": 12,
-    "choferesDisponibles": 8,
-    "multiplicador": "1.25",
-    "calculadoEn": "2026-11-20T18:30:00.000Z"
-  }
-}
-```
+`GET /tarifas`, `POST /tarifas`, `PATCH /tarifas/{id}` y
+`POST /tarifas/{id}/publicar`.
 
-#### Tarifas: `GET /tarifas`, `POST /tarifas`, `PATCH /tarifas/{id}`, `POST /tarifas/{id}/publicar`
-
-- **Roles:** lectura `OPERADOR_SOPORTE` y `ADMINISTRADOR`; escritura `ADMINISTRADOR`.
-- **Ciclo:** se crea un **borrador**, se edita y se **publica**. Una versión publicada no cambia nunca (I12); cambiarla es publicar otra.
-- **Cuerpo de borrador:**
+- **Ciclo:** se crea un **borrador**, se edita y se **publica**. La versión la
+  asigna la base; `publicar` no acepta `vigenteDesde` del cliente: usa una sola
+  marca del reloj del servidor para `vigenteDesde`, `publicadaEn` y `creadaEn`.
+  Una versión publicada no cambia nunca (I12); cambiarla es publicar otra.
+- **Cuerpo de borrador / edición:**
 
 ```json
 {
   "baseCentavos": 100000,
   "porKmCentavos": 50000,
-  "porMinutoCentavos": 2000,
+  "porMinutoCentavos": 10000,
   "precioMaximoCentavos": 1000000
 }
 ```
 
-- **Cuerpo de publicación:** `{ "vigenteDesde": "2026-12-01T00:00:00.000Z" }` (no puede ser anterior a `ahora`).
-- **Éxito:** `201 Created` (borrador) o `200 OK`, con `{ "tarifa": { "id", "estado", "version", …, "vigenteDesde", "publicadaPorId", "publicadaEn", "creadaEn" } }`.
-- **Errores:** `400 DATOS_INVALIDOS` (por ejemplo, `precioMaximoCentavos` menor que `baseCentavos`), `403 NO_AUTORIZADO`, `404 NO_ENCONTRADO`, `409 VERSION_YA_PUBLICADA` (propuesto).
+- **Éxito:** `201 Created` (borrador) o `200 OK`, con
+  `{ "tarifa": { "id", "estado", "version", "baseCentavos", "porKmCentavos", "porMinutoCentavos", "precioMaximoCentavos", "vigenteDesde", "publicadaPorId", "publicadaEn", "creadaEn" } }`.
+- **Errores:** `400 DATOS_INVALIDOS` (por ejemplo, `precioMaximoCentavos` menor
+  que `baseCentavos`), `404 NO_ENCONTRADO`, `409 VERSION_YA_PUBLICADA`.
 
-#### Reglas: `GET /reglas-multiplicador`, `POST /reglas-multiplicador`, `PATCH /reglas-multiplicador/{id}`, `POST /reglas-multiplicador/{id}/publicar`
+#### Reglas: `/admin/configuracion/reglas`
 
-- **Roles y ciclo:** iguales a las tarifas.
-- **Cuerpo de borrador:**
+`GET /reglas`, `POST /reglas`, `PATCH /reglas/{id}` y `POST /reglas/{id}/publicar`.
+
+- **Ciclo y roles:** iguales a las tarifas.
+- **Cuerpo de borrador / edición:**
 
 ```json
 {
-  "formula": "LINEAL_POR_TRAMOS",
-  "umbralInferior": "1.00",
-  "umbralSuperior": "3.00",
-  "multiplicadorMinimo": "1.00",
-  "multiplicadorMaximo": "2.50",
+  "umbralInferior": "0.5",
+  "umbralSuperior": "3",
+  "multiplicadorMinimo": "1",
+  "multiplicadorMaximo": "2",
   "escalaMultiplicador": 2
 }
 ```
 
-Los decimales viajan como texto. Reglas: `umbralSuperior` mayor que `umbralInferior`; `multiplicadorMinimo` mayor o igual que `"1.00"` y menor o igual que el máximo.
+Los decimales viajan como texto (0 a 4 lugares). Reglas: `umbralSuperior` mayor
+que `umbralInferior`; `multiplicadorMinimo` entre `"1"` y el máximo. La fórmula
+es siempre `LINEAL_POR_TRAMOS` y no se envía en el cuerpo.
 
-- **Cuerpo de publicación:** `{ "vigenteDesde": "…", "motivo": "Hora pico de diciembre" }`.
+- **Cuerpo de publicación:** opcional, `{ "motivo": "Hora pico de diciembre" }`.
+  `vigenteDesde` y `publicadaEn` los fija el servidor.
+- **Éxito:** `201 Created` (borrador) o `200 OK` con `{ "regla": { … } }`.
 - **Errores:** los mismos que las tarifas.
 
 ### 5.3 Cotización y confirmación
 
-Todas: **Propuesto — tarjeta E2 · RF-04 + RF-17 + RF-05 + RF-18 + RF-19**. Implementan ADR-0005.
+**Implementado — tarjeta E2 · RF-04 + RF-17 + RF-05 + RF-18 + RF-19.**
+Implementa ADR-0005. El flujo nuevo es
+`POST /cotizaciones` → `POST /cotizaciones/{id}/confirmar`; `POST /viajes`
+permanece como ruta legacy/provisional y no se eliminó en esta entrega.
+
+Al cotizar, el servidor estima distancia y tiempo (Haversine), busca la zona
+activa del origen, cuenta solicitudes y choferes disponibles, calcula el
+multiplicador con aritmética exacta y guarda todo como foto inmutable (I11).
+Ningún importe ni multiplicador lo envía el cliente.
+
+- **Solicitudes que cuentan:** viajes con origen en la zona en estado
+  `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO` o `EN_CURSO`, con
+  `solicitadoEn >= ahora - DEMANDA_VENTANA_MS` (300 000 ms por defecto).
+- **Choferes que cuentan:** habilitados, disponibles, sin viaje activo y con
+  ubicación vigente (`UBICACION_VIGENCIA_MS`) dentro de la zona.
+- **Trazabilidad:** la cotización guarda conteos, `reglaId` y `reglaVersion`,
+  `tarifaId` y `tarifaVersion`, `multiplicador`, `precioCentavos` y
+  `parametrosConteo`. Los id y los parámetros se guardan para auditoría, pero la
+  respuesta pública solo expone las versiones y los conteos.
 
 #### `POST /cotizaciones`
 
 - **Roles:** `PASAJERO`.
-- **Descripción:** estima el viaje con el multiplicador de la zona del origen. El servidor calcula distancia, tiempo, zona, conteos, multiplicador y precio; el cuerpo **no acepta importes ni multiplicadores**. La cotización es inmutable (I11).
 - **Cuerpo:**
 
 ```json
@@ -962,20 +990,34 @@ Todas: **Propuesto — tarjeta E2 · RF-04 + RF-17 + RF-05 + RF-18 + RF-19**. Im
 }
 ```
 
-- **Errores:** `400 DATOS_INVALIDOS`, `403 NO_AUTORIZADO`, `422 FUERA_DE_COBERTURA`, `503 CONFIGURACION_INCOMPLETA` (propuesto), `429 DEMASIADAS_SOLICITUDES` (límite propio, §7.2).
+- **Errores:** `400 DATOS_INVALIDOS`, `403 NO_AUTORIZADO`, `422 FUERA_DE_COBERTURA`,
+  `503 CONFIGURACION_INCOMPLETA`, `429 DEMASIADAS_SOLICITUDES` (§7.1).
+
+#### `GET /cotizaciones`
+
+- **Roles:** `PASAJERO`.
+- **Éxito:** `200 OK` con `{ "cotizaciones": [ … ] }`, solo las propias, con el
+  `estado` efectivo calculado según la hora del servidor.
 
 #### `GET /cotizaciones/{id}`
 
-- **Roles:** `PASAJERO` (propio), `OPERADOR_SOPORTE`, `ADMINISTRADOR`.
-- **Éxito:** `200 OK` con `{ "cotizacion": { … } }`. El `estado` es el **efectivo**: una cotización vigente con `ahora ≥ venceEn` se devuelve como `VENCIDA`.
-- **Errores:** `400`, `403 NO_AUTORIZADO`, `404 NO_ENCONTRADO`.
+- **Roles:** autenticado. Por recurso: `PASAJERO` (propio), `OPERADOR_SOPORTE` o
+  `ADMINISTRADOR`.
+- **Éxito:** `200 OK` con `{ "cotizacion": { … } }`. El `estado` es el **efectivo**:
+  una cotización vigente con `ahora ≥ venceEn` se devuelve como `VENCIDA`.
+- **Errores:** `400 DATOS_INVALIDOS`, `403 NO_AUTORIZADO`, `404 NO_ENCONTRADO`.
 
 #### `POST /cotizaciones/{id}/confirmar`
 
 - **Roles:** `PASAJERO`. Por recurso: solo el **dueño** de la cotización.
-- **Cabeceras:** `Idempotency-Key` obligatoria (§3.2).
-- **Descripción:** convierte la cotización vigente en un viaje `SOLICITADO`, en una sola transacción con escritura condicional (ADR-0005). `precioFijadoCentavos` y `multiplicadorFijado` se **copian de la cotización**: el pasajero paga exactamente el precio que vio, aunque la demanda haya cambiado. Dispara la búsqueda de choferes y las ofertas (E3).
-- **Cuerpo:** vacío (`{}`). Cualquier campo, incluido `precio`, se rechaza.
+- **Cabeceras:** `Idempotency-Key` obligatoria (§3).
+- **Descripción:** convierte la cotización vigente en un viaje `SOLICITADO` con
+  un `UPDATE` condicional sobre `estado = 'VIGENTE' AND vence_en > ahora`, en una
+  sola transacción. `precioFijadoCentavos` y `multiplicadorFijado` se **copian de
+  la cotización**: el pasajero paga exactamente el precio que vio, aunque la
+  demanda haya cambiado. No dispara ofertas: eso queda para E3.
+- **Cuerpo:** vacío. La ruta no valida campos adicionales; el precio nunca se
+  toma del cliente.
 - **Éxito:** `201 Created`
 
 ```json
@@ -993,20 +1035,19 @@ Todas: **Propuesto — tarjeta E2 · RF-04 + RF-17 + RF-05 + RF-18 + RF-19**. Im
 }
 ```
 
-- **Reintento con la misma clave y la misma cotización:** `200 OK` con `Idempotency-Replayed: true`.
+- **Reintento con la misma clave y la misma cotización:** `200 OK` con
+  `Idempotency-Replayed: true` y el viaje original, aunque la demanda cambió.
 - **Errores:**
 
 | HTTP | Código | Causa |
 |---:|---|---|
 | 400 | `CLAVE_DE_IDEMPOTENCIA_REQUERIDA` | Falta la cabecera. |
-| 400 | `DATOS_INVALIDOS` | Cuerpo con campos. |
-| 403 | `NO_AUTORIZADO` | No es el dueño. |
+| 400 | `DATOS_INVALIDOS` | El identificador de la cotización no es UUID. |
+| 403 | `NO_AUTORIZADO` | No es el dueño (otro rol o recurso ajeno). |
 | 404 | `NO_ENCONTRADO` | La cotización no existe. |
 | 409 | `COTIZACION_YA_CONFIRMADA` | Ya generó un viaje (con otra clave). |
 | 409 | `CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO` | La clave se usó para confirmar otra cotización. |
 | 410 | `COTIZACION_VENCIDA` | `ahora ≥ venceEn`. |
-
-Cuando exista, **reemplaza a `POST /viajes`** (§8, D1).
 
 ### 5.4 Vehículo y ubicación del chofer
 
@@ -1260,13 +1301,12 @@ Los endpoints propios de Python (`POST /reportes/zonas/{zonaId}/actualizar` y `G
 | `POST /viajes/{id}/finalizar` | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
 | `GET /viajes/{id}/cobro` | propio | propio (asignado) | ✓ | ✓ | ✗ |
 | *`POST /usuarios`* | ✗ | ✗ | ✗ | ✓ | ✗ |
-| *`GET /zonas`, `GET /zonas/{id}`, `GET /zonas/{id}/multiplicador`* | ✗ | ✗ | ✓ | ✓ | ✗ |
-| *`POST /zonas`, `PATCH /zonas/{id}`* | ✗ | ✗ | ✗ | ✓ | ✗ |
-| *`GET /tarifas`, `GET /reglas-multiplicador`* | ✗ | ✗ | ✓ | ✓ | ✗ |
-| *`POST`, `PATCH` y `…/publicar` de tarifas y reglas* | ✗ | ✗ | ✗ | ✓ | ✗ |
-| *`POST /cotizaciones`* | ✓ | ✗ | ✗ | ✗ | ✗ |
-| *`GET /cotizaciones/{id}`* | propio | ✗ | ✓ | ✓ | ✗ |
-| *`POST /cotizaciones/{id}/confirmar`* | propio | ✗ | ✗ | ✗ | ✗ |
+| `GET`, `POST /admin/configuracion/zonas` y `PATCH /admin/configuracion/zonas/{id}` | ✗ | ✗ | ✗ | ✓ | ✗ |
+| `GET`, `POST /admin/configuracion/tarifas`, `PATCH /…/{id}` y `POST /…/{id}/publicar` | ✗ | ✗ | ✗ | ✓ | ✗ |
+| `GET`, `POST /admin/configuracion/reglas`, `PATCH /…/{id}` y `POST /…/{id}/publicar` | ✗ | ✗ | ✗ | ✓ | ✗ |
+| `POST /cotizaciones`, `GET /cotizaciones` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `GET /cotizaciones/{id}` | propio | ✗ | ✓ | ✓ | ✗ |
+| `POST /cotizaciones/{id}/confirmar` | propio | ✗ | ✗ | ✗ | ✗ |
 | `GET`, `PUT /choferes/yo/vehiculo` | ✗ | propio | ✗ | ✗ | ✗ |
 | *`GET /choferes/{usuarioId}`* | ✗ | ✗ | ✓ | ✓ | ✗ |
 | `PUT /choferes/yo/ubicacion` | ✗ | propio (habilitado) | ✗ | ✗ | ✗ |
@@ -1286,6 +1326,7 @@ Notas sobre la tabla:
 - Salud, registro y login son **públicos**: no exigen token. El registro siempre crea una cuenta nueva de `PASAJERO` o `CHOFER`, sin importar quién lo llame.
 - En la columna «Servicio Python», ✗ significa que la credencial de servicio no es un JWT de usuario: en los endpoints autenticados se rechaza con `401 NO_AUTENTICADO`, y en registro y login no corresponde porque el servicio no tiene cuenta de usuario.
 - «propio» en `PATCH /usuarios/{id}` incluye al administrador: puede ver cualquier cuenta, pero solo editar la suya.
+- La configuración administrativa (§5.2) es de **lectura y escritura exclusiva** del `ADMINISTRADOR`; `OPERADOR_SOPORTE` no puede consultarla. Los datos necesarios para explicar un precio están en la cotización (§5.3).
 
 ### 6.1 Verificación por rol y verificación por recurso
 
@@ -1309,7 +1350,7 @@ Hoy los casos de uso buscan el recurso **antes** de verificar el permiso: un ide
 | **Global** | Todas las rutas, incluidas `/health` y `/ready`, por IP. | 300 solicitudes por minuto. | `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de solicitudes. Intente más tarde."`). |
 | **Login** | `POST /auth/login`, por IP. Solo cuentan los intentos **fallidos** (respuesta 4xx o 5xx). | 5 fallos cada 15 minutos. | `LOGIN_RATE_LIMIT_MAX`, `LOGIN_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Demasiados intentos de inicio de sesión. Intentá más tarde."`). |
 | **Registro** | `POST /auth/registro`, por IP. | 10 solicitudes por minuto. | `REGISTRO_RATE_LIMIT_MAX`, `REGISTRO_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de registros. Intente más tarde."`). |
-| **Viajes** | `POST /viajes`, `/aceptar`, `/finalizar` y `/cancelar`, por IP, con un contador **compartido** entre las cuatro rutas. | 30 solicitudes por minuto. | `VIAJES_RATE_LIMIT_MAX`, `VIAJES_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de operaciones sobre viajes. Intente más tarde."`). |
+| **Viajes** | `POST /viajes`, `/aceptar`, `/finalizar`, `/cancelar`, `POST /cotizaciones`, `POST /cotizaciones/{id}/confirmar` y las escrituras de `/admin/configuracion`, por IP, con un contador **compartido** entre todas esas rutas. | 30 solicitudes por minuto. | `VIAJES_RATE_LIMIT_MAX`, `VIAJES_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de operaciones sobre viajes. Intente más tarde."`). |
 
 - Todos devuelven las cabeceras `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` y `RateLimit-Policy` (borrador 6 del IETF), por ejemplo `RateLimit-Limit: 30`, `RateLimit-Remaining: 29`, `RateLimit-Reset: 60`, `RateLimit-Policy: 30;w=60`, y `Retry-After` en el 429. En las rutas con un límite propio, las cabeceras muestran ese límite y no el global.
 - Los límites de registro y de viajes se suman al global: una solicitud cuenta para los dos.
@@ -1317,12 +1358,12 @@ Hoy los casos de uso buscan el recurso **antes** de verificar el permiso: un ide
 - Los contadores viven **en memoria del proceso**: con varias instancias cada una cuenta por separado (ADR-0003).
 - `trust proxy` está en `1`: detrás de un proxy, la IP es la del primer salto de `X-Forwarded-For`.
 - `PUT /choferes/yo/ubicacion` no tiene un límite propio todavía: ver §7.2.
+- El contador «de viajes» cubre también cotizar, confirmar y las escrituras de configuración; el mensaje de error conserva el texto histórico («operaciones sobre viajes»).
 
 ### 7.2 Límites propuestos para endpoints costosos
 
 | Endpoint | Motivo | Propuesta | Tarjeta |
 |---|---|---|---|
-| `POST /cotizaciones` | Cuenta solicitudes y choferes de la zona en cada llamada (ADR-0005, A1). | Límite por usuario, por ejemplo 30 por minuto. | E2 · cotizar y confirmar |
 | `PUT /choferes/yo/ubicacion` | Alta frecuencia por diseño. Hoy solo la cubre el límite global por IP (300 por minuto): 500 choferes simulados desde una sola máquina cada 2 segundos (unos 15 000 por minuto) quedarían bloqueados. | Límite por chofer (clave `usuarioId`), por ejemplo 1 por segundo, en lugar del global por IP. | E4 · simulador, carga y mediciones |
 | `GET /reportes/zonas/{zonaId}` | Llama a otro servicio. | Límite por usuario, por ejemplo 10 por minuto. | E4 · parte Python |
 
@@ -1348,7 +1389,7 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 
 | # | Diferencia | Modelo o ADR | Código hoy | Tarjeta que la resuelve |
 |---|---|---|---|---|
-| D1 | El viaje se crea directo, sin cotización. | El viaje nace al **confirmar una cotización** y guarda `cotizacionId` y `multiplicadorFijado` (§4.10, §6.1; ADR-0005). | `POST /viajes` crea el viaje con una tarifa provisional por distancia, sin multiplicador, sin zona y sin tiempo estimado. No existen `cotizacionId` ni `multiplicadorFijado`. | E2 · RF-04 + RF-17 + RF-05 + RF-18 + RF-19 |
+| D1 | ~~El viaje se crea directo, sin cotización.~~ **Resuelto; queda una ruta legacy.** | El viaje nace al **confirmar una cotización** y guarda `cotizacionId` y `multiplicadorFijado` (§4.10, §6.1; ADR-0005). | Ya existe el flujo `POST /cotizaciones` → `POST /cotizaciones/{id}/confirmar`, que fija precio y multiplicador y guarda la trazabilidad. `POST /viajes` se conserva como ruta provisional con tarifa por distancia; los viajes confirmados no se recalculan. | Resuelto en E2 · RF-17 + RF-18 + RF-19; queda decidir cuándo retirar `POST /viajes` |
 | D2 | No hay ofertas. | El viaje se **ofrece** a choferes elegibles y se acepta una oferta con vencimiento (§4.11, §6.2). | Cualquier chofer elegible ve todos los viajes `SOLICITADO` en `GET /viajes/disponibles` y acepta el viaje directamente. | E3 · ofertas y asignación |
 | D3 | ~~La elegibilidad no mira la ubicación.~~ **Resuelta.** | Chofer elegible = habilitado, disponible, libre **y con ubicación vigente reciente** (§2, I5). | Listar y aceptar viajes exigen una ubicación de menos de `UBICACION_VIGENCIA_MS` (60 s por defecto). | Resuelta en E2 · RF-02 + RF-03 |
 | D4 | ~~Habilitar no exige vehículo.~~ **Resuelta.** | Habilitar exige un vehículo registrado (§6.4, Q11, propuesta). | Habilitar sin vehículo responde `409 CHOFER_SIN_VEHICULO`; el vehículo no se puede borrar. | Resuelta en E2 · RF-02 + RF-03 |
@@ -1356,7 +1397,7 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 | D6 | El pasajero no puede cancelar con el chofer en camino. | El pasajero cancela en `SOLICITADO`, `ASIGNADO` y `CHOFER_EN_CAMINO` (§6.1). | `cancelarPorPasajero` solo admite `SOLICITADO` y `ASIGNADO` (consecuencia de D5). | E3 · ofertas y asignación |
 | D7 | Faltan atributos del viaje. | `iniciadoEn`, `distanciaRealM`, `tiempoRealS`, `tarifaFinal` (§4.10). | No existen. `POST /viajes/{id}/finalizar` solo fija `cerradoEn`. | E4 · tarifa y cobro |
 | D8 | Nombre del precio. | `precioFijado` (§4.10). | `precioFijadoCentavos`. Se propone adoptar el sufijo `Centavos` en todos los montos de la API (§1) y alinear el modelo. | E2 · cotizar y confirmar |
-| D9 | Tarifa provisional distinta de la del modelo. | `Tarifa` versionada con `base`, `porKm`, `porMinuto` y `precioMaximo`; sin mínimo (§4.7, §7.2). | Variables de entorno `TARIFA_BASE_CENTAVOS`, `TARIFA_POR_KM_CENTAVOS`, `TARIFA_MINIMO_CENTAVOS` y `TARIFA_MAXIMO_CENTAVOS`; sin componente por minuto; con mínimo. | E2 · RF-23 + RF-16 |
+| D9 | ~~Tarifa provisional distinta de la del modelo.~~ **Resuelta para el flujo nuevo.** | `Tarifa` versionada con `base`, `porKm`, `porMinuto` y `precioMaximo`; sin mínimo (§4.7, §7.2). | La cotización usa la tarifa publicada en la base, con componente por minuto y sin mínimo. `POST /viajes` sigue usando las variables `TARIFA_*` y el mínimo histórico hasta que se retire. | Resuelta en E2 · RF-23 + RF-16 |
 | D10 | Soporte no ve usuarios. | El operador ve los datos básicos de los participantes de los viajes que atiende (§3). | `GET /usuarios/{id}` solo admite al propio usuario y al administrador; soporte recibe 403. | E5 · historial y soporte |
 | D11 | Soporte y administrador no ven el perfil de chofer. | Ambos pueden ver el chofer y su vehículo (§3). | Solo existen `GET /choferes/yo` y `GET /choferes/yo/vehiculo`, limitados a `CHOFER`, aunque los casos de uso ya admiten al administrador y a soporte. Se propone `GET /choferes/{usuarioId}` (§5.4). | E5 · historial y soporte |
 | D12 | El chofer ve todos los viajes solicitados. | El chofer ve solo los viajes que se le **ofrecieron** o asignaron (§3). | `GET /viajes/disponibles` muestra cualquier viaje `SOLICITADO`, con el `pasajeroId`. Se resuelve con las ofertas (D2). | E3 · ofertas y asignación |

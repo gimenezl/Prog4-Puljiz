@@ -1,6 +1,6 @@
 # ADR-0005: Cotización inmutable y confirmación condicional para el precio dinámico
 
-- **Estado:** Propuesto (se acepta en el PR que implemente RF-16, RF-17 y RF-18)
+- **Estado:** Aceptado (implementado en la rama E2 · RF-23 + RF-16)
 - **Fecha:** 2026-11-11
 - **Participantes:** Lucas Gimenez, Guido Ayala, Enzo Vernet
 - **Tarjeta:** E2 · ADR de precio dinámico y cotización
@@ -20,11 +20,12 @@ Hay que decidir:
 2. cómo se garantiza que la confirmación usa exactamente lo que vio el pasajero;
 3. qué se guarda para auditar y explicar cada precio.
 
-Estado actual del código: `src/domain/services/precio-base.js` calcula un precio
-fijo por distancia (base + km, con mínimo y máximo) y lo guarda en
-`viajes.precio_fijado_centavos`. Todavía no hay zonas, reglas, multiplicador ni
-cotizaciones. Las entidades ya están definidas en `docs/modelo.md` (secciones 4.5
-a 4.9 y 7).
+Estado actual del código: `src/domain/services/precio.js` calcula el precio con
+base + kilómetros + minutos, aplica el multiplicador una sola vez con aritmética
+exacta (BigInt) y respeta el tope después del multiplicador. El flujo completo
+(zonas, tarifas, reglas, cotizaciones y confirmación) quedó implementado según
+`docs/modelo.md` (secciones 4.5 a 4.9 y 7.1); `POST /viajes` se conserva como
+ruta legacy/provisional.
 
 ## Alternativas consideradas
 
@@ -43,7 +44,7 @@ a 4.9 y 7).
 | B2. Recalcular al confirmar y comparar con el precio que manda el cliente | No hace falta guardar cotizaciones.                                                                                                                                                                                                                                         | Confía en un importe del cliente (prohibido por RF-17); si el precio cambió, el pasajero recibe un rechazo aunque haya visto un precio válido. |
 | B3. Token firmado con el precio (sin persistir)                           | Sin fila en la base.                                                                                                                                                                                                                                                        | Para auditar (RF-18) igual hay que guardar los datos al confirmar; la doble confirmación con el mismo token necesita otro mecanismo.           |
 
-## Decisión (propuesta)
+## Decisión
 
 1. **Multiplicador al cotizar (A1).** Al cotizar se cuentan las solicitudes y los
    choferes disponibles de la zona del origen y se aplica la regla de

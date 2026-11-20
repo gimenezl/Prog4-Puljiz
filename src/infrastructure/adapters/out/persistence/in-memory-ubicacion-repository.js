@@ -20,6 +20,10 @@ export class InMemoryUbicacionRepository {
     return this.#porChoferId.get(choferId) ?? null;
   }
 
+  async listar(_ejecutor) {
+    return [...this.#porChoferId.values()];
+  }
+
   async verificarDisponibilidad() {
     return true;
   }
