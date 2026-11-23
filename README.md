@@ -81,6 +81,8 @@ en curso y cierra la pool de PostgreSQL. Si el cierre supera
   cambios y verificaciones de la configuración administrativa versionada.
 - `docs/modelo.md`: modelo de dominio y diagramas.
 - `docs/api.md`: contrato de la API HTTP, códigos de error, rate limits y tabla de permisos.
+- `docs/mediciones.md`: mediciones con entorno, comandos y resultados (RF-06:
+  búsqueda de choferes cercanos, PostGIS contra JavaScript).
 - `docs/politica-de-idempotencia.md`: alcance, reintentos, conflictos y cobros.
 - `docs/auditoria-dependencias.md`: resultados y justificación de la auditoría.
 - `docs/guia-de-prueba-y-rutas.md`: recorrido manual con `curl`.
@@ -194,7 +196,7 @@ Endpoints:
 | `GET` | `/usuarios/:id` | Propietario o `ADMINISTRADOR` |
 | `PATCH` | `/usuarios/:id` | Solo propietario; únicamente `nombre` |
 | `POST` | `/viajes` | `PASAJERO`, con `Idempotency-Key` |
-| `GET` | `/viajes/disponibles` | `CHOFER` habilitado, disponible y con ubicación reciente |
+| `GET` | `/viajes/disponibles` | `CHOFER` habilitado, disponible y con ubicación reciente; solo viajes cercanos |
 | `GET` | `/viajes/:id` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` |
 | `POST` | `/viajes/:id/aceptar` | `CHOFER` habilitado, disponible y con ubicación reciente |
 | `POST` | `/viajes/:id/finalizar` | Chofer asignado, con `Idempotency-Key` |
@@ -240,6 +242,13 @@ Endpoints:
   defecto). La hora la pone el servidor. La ubicación se guarda con PostGIS
   (`geography(Point, 4326)` con índice GiST, ADR-0006), por eso la base usa la
   imagen `postgis/postgis`.
+- `GET /viajes/disponibles` muestra solo los viajes cuyo origen está a
+  `BUSQUEDA_RADIO_M` metros o menos (5000 por defecto) del chofer, del más
+  cercano al más lejano y con `distanciaM`. La búsqueda la resuelve PostGIS con
+  índices GiST, nunca recorriendo los datos en JavaScript (RF-06). El buscador
+  de choferes cercanos para las ofertas devuelve hasta `BUSQUEDA_MAX_CANDIDATOS`
+  (10). La comparación de rendimiento se repite con `pnpm medir:busqueda` (ver
+  `docs/mediciones.md`).
 - `POST /viajes` exige la cabecera `Idempotency-Key`. La clave se guarda junto
   con el viaje, el hash SHA-256 del cuerpo canónico y la respuesta original.
   - Misma clave y mismo cuerpo: devuelve el viaje original (`200`, cabecera
