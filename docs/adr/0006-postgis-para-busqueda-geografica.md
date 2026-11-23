@@ -1,6 +1,6 @@
 # ADR-0006: PostGIS con índice espacial para buscar choferes cercanos
 
-- **Estado:** Propuesto (falta medir; se acepta en el PR de RF-06 con los números)
+- **Estado:** Aceptado (2026-11-23, con la medición de `docs/mediciones.md` §1)
 - **Fecha:** 2026-11-11
 - **Participantes:** Lucas Gimenez, Guido Ayala, Enzo Vernet
 - **Tarjeta:** E3 · ADR de búsqueda geográfica
@@ -44,29 +44,51 @@ Usar **PostGIS (A)**:
 - Búsqueda de candidatos:
 
   ```sql
-  SELECT c.usuario_id, ST_Distance(u.posicion, $1) AS distancia_m
+  SELECT u.chofer_id, ST_Distance(u.posicion, $1) AS distancia_m
     FROM ubicaciones_vigentes u
-    JOIN choferes c ON c.usuario_id = u.chofer_id
-   WHERE c.habilitado AND c.disponible AND c.viaje_activo_id IS NULL
-     AND u.actualizada_en > $2                -- ubicación reciente
+   WHERE u.actualizada_en > $2                -- ubicación reciente
      AND ST_DWithin(u.posicion, $1, $3)       -- radio en metros, usa el índice
-   ORDER BY u.posicion <-> $1
+     AND (SELECT c.habilitado AND c.disponible AND c.viaje_activo_id IS NULL
+            FROM choferes c WHERE c.usuario_id = u.chofer_id)   -- elegible
+   ORDER BY u.posicion <-> $1, u.chofer_id
    LIMIT $4;
   ```
+
+  La elegibilidad va como **subconsulta escalar** y no como `JOIN`: PostGIS
+  subestima las filas que deja pasar `ST_DWithin` y, con un `JOIN`, el
+  planificador elegía un cruce cuadrático en muchos puntos de la ciudad (ver
+  la medición). La consulta real está en
+  `src/infrastructure/adapters/out/geografia/postgis-buscador-de-choferes.js`.
+- Viajes cercanos al chofer (`GET /viajes/disponibles`): columna generada
+  `viajes.origen geography(Point, 4326)` con índice GiST parcial sobre los
+  viajes `SOLICITADO` (migración `012`).
 
 - Pertenencia a zona: `ST_Covers(zona.area, $1)` sobre zonas activas, con índice
   GiST en `area`.
 - La imagen de la base pasa de `postgres:15-alpine` a `postgis/postgis:15-3.4`
   (o equivalente) en `compose.yaml` y `compose.test.yaml`.
 
-## Medición pendiente
+## Medición
 
-Antes de aceptar este ADR hay que registrar en `docs/mediciones.md`:
+Detalle completo, entorno y comandos para repetirla en `docs/mediciones.md` §1
+(`pnpm medir:busqueda`). Se comparó A contra **D (filtrar en JavaScript)** en
+lugar de B: D es el mecanismo que el proyecto ya usa (medidor de demanda de las
+cotizaciones), así que la comparación responde a un problema real y no requiere
+programar un mecanismo descartable.
 
-- `EXPLAIN (ANALYZE, BUFFERS)` de la búsqueda con 500 y con 5000 choferes, mostrando
-  que usa el índice GiST;
-- p50, p95 y p99 de la búsqueda con 500 choferes actualizando cada 2 segundos;
-- la misma medición con la alternativa B, para comparar.
+| Choferes | A. PostGIS p50 / p95 | D. JavaScript p50 / p95 |
+|---:|---:|---:|
+| 500 | 1,6 ms / 2,0 ms | 5,7 ms / 8,2 ms |
+| 5000 | 4,4 ms / 6,4 ms | 58,5 ms / 68,9 ms |
+
+- Al multiplicar los choferes por 10, A crece unas 2,8 veces y D unas 10 veces.
+- `EXPLAIN (ANALYZE, BUFFERS)` muestra `Bitmap Index Scan on
+  ubicaciones_vigentes_posicion_idx` y 2,6 ms de ejecución con 5000 choferes.
+- La primera versión con `JOIN` era cuadrática con 5000 choferes (p50 de 72 ms,
+  peor que D); se corrigió con la subconsulta escalar.
+
+**Pendiente:** p50, p95 y p99 con 500 choferes **actualizando cada 2 segundos**
+mientras se busca. Lo mide la tarjeta «E4 · Simulador, carga y mediciones».
 
 ## Consecuencias
 
