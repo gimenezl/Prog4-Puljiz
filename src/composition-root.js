@@ -1,4 +1,6 @@
 import { createHttpApp } from './infrastructure/adapters/in/http/app.js';
+import { JavaScriptBuscadorDeChoferes } from './infrastructure/adapters/out/geografia/javascript-buscador-de-choferes.js';
+import { PostgisBuscadorDeChoferes } from './infrastructure/adapters/out/geografia/postgis-buscador-de-choferes.js';
 import { FixedClock } from './infrastructure/adapters/out/clock/fixed-clock.js';
 import { SystemClock } from './infrastructure/adapters/out/clock/system-clock.js';
 import { CryptoIdGenerator } from './infrastructure/adapters/out/ids/crypto-id-generator.js';
@@ -127,6 +129,11 @@ export function composeApplication(entorno) {
   const repositorioUbicaciones = usaAdaptadoresFalsos
     ? new InMemoryUbicacionRepository()
     : new PostgresUbicacionRepository({ baseDeDatos });
+
+  // RF-06: con PostgreSQL la búsqueda la resuelve PostGIS con el índice GiST.
+  const buscadorDeChoferesCercanos = usaAdaptadoresFalsos
+    ? new JavaScriptBuscadorDeChoferes({ repositorioChoferes, repositorioUbicaciones })
+    : new PostgisBuscadorDeChoferes({ baseDeDatos });
 
   const repositorioZonas = usaAdaptadoresFalsos
     ? new InMemoryZonaRepository()
@@ -444,6 +451,7 @@ export function composeApplication(entorno) {
     repositorioTarifas,
     repositorioReglas,
     repositorioCotizaciones,
+    buscadorDeChoferesCercanos,
     simuladorDeCobro,
     unidadDeTrabajo,
     hasherContrasenas,

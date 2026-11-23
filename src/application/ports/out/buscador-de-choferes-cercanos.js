@@ -16,6 +16,7 @@
  *
  * Adaptadores:
  * - real:  src/infrastructure/adapters/out/geografia/postgis-buscador-de-choferes.js
- * - falso: src/infrastructure/adapters/out/geografia/en-memoria-buscador-de-choferes.js
+ * - falso: src/infrastructure/adapters/out/geografia/javascript-buscador-de-choferes.js
+ *          (filtra en JavaScript; también es el mecanismo de comparación de la medición)
  */
 export {};
