@@ -120,6 +120,33 @@ describirPostgres('búsqueda de choferes cercanos con PostGIS (RF-06)', () => {
     }
   });
 
+  test('los viajes cercanos usan el origen generado y solo los SOLICITADO', async () => {
+    const enPalermo = await kit.crearViajeDePrueba({ origen: PALERMO });
+    const enCongreso = await kit.crearViajeDePrueba({ origen: CONGRESO });
+    await kit.crearViajeDePrueba({ origen: BELGRANO });
+    const { viaje: asignado } = await kit.crearViajeAsignado(); // origen en el Obelisco
+
+    // La columna generada se calcula sola a partir de origen_lat y origen_lng.
+    const { rows } = await kit.baseDeDatos.query(
+      'SELECT ST_Y(origen::geometry) AS lat, ST_X(origen::geometry) AS lng FROM viajes WHERE id = $1',
+      [enPalermo.viaje.id],
+    );
+    assert.deepEqual({ lat: rows[0].lat, lng: rows[0].lng }, PALERMO);
+
+    const cercanos = await kit.repositorioViajes.listarSolicitadosCerca(OBELISCO, 5000, 50);
+
+    assert.deepEqual(
+      cercanos.map(({ viaje }) => viaje.id),
+      [enCongreso.viaje.id, enPalermo.viaje.id],
+    );
+    assert.equal(
+      cercanos.some(({ viaje }) => viaje.id === asignado.id),
+      false,
+      'un viaje ASIGNADO no aparece aunque esté en el centro',
+    );
+    assert.equal(Math.round(cercanos[1].distanciaM / 100), 48);
+  });
+
   test('la consulta usa el índice GiST de la ubicación', async () => {
     await prepararEscenario();
     // Con pocas filas el planificador prefiere recorrer la tabla: se desactiva
@@ -135,5 +162,36 @@ describirPostgres('búsqueda de choferes cercanos con PostGIS (RF-06)', () => {
     });
 
     assert.match(plan, /ubicaciones_vigentes_posicion_idx/);
+  });
+
+  test('con 500 viajes solicitados, el planificador elige el índice GiST del origen', async () => {
+    // Con pocos viajes conviene más el índice por estado. Con muchos viajes
+    // SOLICITADO repartidos por la ciudad, filtrar por estado ya no descarta
+    // nada y el índice espacial es el que achica la búsqueda.
+    const pasajero = await kit.crearUsuario();
+    await kit.baseDeDatos.query(
+      `INSERT INTO viajes (
+         id, pasajero_id, origen_lat, origen_lng, destino_lat, destino_lng,
+         distancia_estimada_m, precio_fijado_centavos, estado, solicitado_en
+       )
+       SELECT gen_random_uuid(), $1,
+              -34.9 + (n % 25) * 0.025, -58.7 + (n / 25) * 0.025,
+              -34.60, -58.38, 1000, 150000, 'SOLICITADO', now()
+         FROM generate_series(0, 499) AS n`,
+      [pasajero.id],
+    );
+    await kit.baseDeDatos.query('ANALYZE viajes');
+
+    const planViajes = await kit.baseDeDatos.transaccion(async (tx) => {
+      const { rows } = await tx.query(
+        `EXPLAIN SELECT id FROM viajes
+          WHERE estado = 'SOLICITADO'
+            AND ST_DWithin(origen, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, 5000)`,
+        [OBELISCO.lng, OBELISCO.lat],
+      );
+      return rows.map((fila) => fila['QUERY PLAN']).join('\n');
+    });
+
+    assert.match(planViajes, /viajes_origen_solicitados_idx/);
   });
 });

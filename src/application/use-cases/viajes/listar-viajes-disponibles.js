@@ -8,8 +8,12 @@ const LIMITE_MAXIMO = 100;
  * Caso de uso: listar los viajes solicitados que puede aceptar un chofer.
  *
  * Solo un chofer habilitado, disponible, libre y con ubicación vigente recibe
- * la lista. La validación definitiva se repite al aceptar, porque entre la
- * consulta y la aceptación otro chofer puede haberse quedado con el viaje.
+ * la lista, y solo ve los viajes cuyo origen está dentro de `radioBusquedaM`
+ * de su ubicación, del más cercano al más lejano (RF-06). La validación
+ * definitiva se repite al aceptar, porque entre la consulta y la aceptación
+ * otro chofer puede haberse quedado con el viaje.
+ *
+ * Devuelve `[{ viaje, distanciaM }]`.
  */
 export function crearListarViajesDisponibles({
   repositorioViajes,
@@ -17,6 +21,7 @@ export function crearListarViajesDisponibles({
   repositorioUbicaciones,
   reloj,
   vigenciaUbicacionMs,
+  radioBusquedaM,
 }) {
   return async function listarViajesDisponibles({ choferId, limite = LIMITE_POR_DEFECTO }) {
     const cantidad = Number.isInteger(limite)
@@ -39,13 +44,18 @@ export function crearListarViajesDisponibles({
       );
     }
 
-    await exigirUbicacionVigente({
+    const ubicacion = await exigirUbicacionVigente({
       repositorioUbicaciones,
       choferId,
       ahora: reloj.ahora(),
       vigenciaMs: vigenciaUbicacionMs,
     });
 
-    return repositorioViajes.listarSolicitados(cantidad);
+    // La ubicación vigente del chofer es el centro de la búsqueda.
+    return repositorioViajes.listarSolicitadosCerca(
+      ubicacion.punto.aJSON(),
+      radioBusquedaM,
+      cantidad,
+    );
   };
 }

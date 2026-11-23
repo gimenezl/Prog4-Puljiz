@@ -52,11 +52,13 @@ export function createViajesRouter({
     '/disponibles',
     soloChofer,
     asyncHandler(async (req, res) => {
-      const viajes = await listarViajesDisponibles({
+      const cercanos = await listarViajesDisponibles({
         choferId: req.autenticacion.usuarioId,
       });
 
-      res.json({ viajes: viajes.map((viaje) => viaje.aVistaPublica()) });
+      res.json({
+        viajes: cercanos.map(({ viaje, distanciaM }) => ({ ...viaje.aVistaPublica(), distanciaM })),
+      });
     }),
   );
 

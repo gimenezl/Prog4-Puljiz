@@ -255,6 +255,7 @@ export function composeApplication(entorno) {
     repositorioUbicaciones,
     reloj,
     vigenciaUbicacionMs: entorno.UBICACION_VIGENCIA_MS,
+    radioBusquedaM: entorno.BUSQUEDA_RADIO_M,
   });
 
   const medidorDeDemanda = new MedidorDeDemanda({
