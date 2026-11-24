@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { BELGRANO, CONGRESO, PALERMO } from '../../../helpers/lugares.js';
 import { crearKitViajes } from '../../../helpers/viajes-kit.js';
 
 const ADMIN = Object.freeze({
@@ -114,10 +115,10 @@ test('listar disponibles exige un chofer elegible y devuelve los viajes solicita
   const primero = await kit.crearViajeDePrueba();
   const segundo = await kit.crearViajeDePrueba();
 
-  const viajes = await kit.listarViajesDisponibles({ choferId: disponible.usuarioId });
+  const cercanos = await kit.listarViajesDisponibles({ choferId: disponible.usuarioId });
 
   assert.deepEqual(
-    viajes.map((viaje) => viaje.id).sort(),
+    cercanos.map(({ viaje }) => viaje.id).sort(),
     [primero.viaje.id, segundo.viaje.id].sort(),
   );
 
@@ -125,6 +126,24 @@ test('listar disponibles exige un chofer elegible y devuelve los viajes solicita
     () => kit.listarViajesDisponibles({ choferId: noDisponible.usuarioId }),
     (error) => error.codigo === 'CHOFER_NO_ELEGIBLE',
   );
+});
+
+test('el chofer solo ve los viajes dentro del radio, del más cercano al más lejano', async () => {
+  // El kit deja al chofer con su ubicación en el Obelisco.
+  const kit = crearKitViajes();
+  const chofer = await kit.crearChofer();
+  const enPalermo = await kit.crearViajeDePrueba({ origen: PALERMO });
+  const enCongreso = await kit.crearViajeDePrueba({ origen: CONGRESO });
+  await kit.crearViajeDePrueba({ origen: BELGRANO }); // ~7,7 km: fuera de los 5 km
+
+  const cercanos = await kit.listarViajesDisponibles({ choferId: chofer.usuarioId });
+
+  assert.deepEqual(
+    cercanos.map(({ viaje }) => viaje.id),
+    [enCongreso.viaje.id, enPalermo.viaje.id],
+  );
+  assert.equal(Math.round(cercanos[0].distanciaM / 100), 12);
+  assert.equal(Math.round(cercanos[1].distanciaM / 100), 48);
 });
 
 test('obtener un viaje autoriza al pasajero, al chofer asignado y al administrador', async () => {

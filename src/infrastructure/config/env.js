@@ -48,6 +48,9 @@ const esquemaEntorno = z
     TARIFA_MAXIMO_CENTAVOS: z.coerce.number().int().min(0).default(1000000),
     // Antigüedad máxima de la ubicación de un chofer para recibir viajes (RF-03).
     UBICACION_VIGENCIA_MS: z.coerce.number().int().min(1000).default(60000),
+    // Búsqueda de choferes y viajes cercanos (RF-06, ADR-0006).
+    BUSQUEDA_RADIO_M: z.coerce.number().int().min(100).max(50000).default(5000),
+    BUSQUEDA_MAX_CANDIDATOS: z.coerce.number().int().min(1).max(100).default(10),
     // Cotización por demanda (RF-16/RF-23): ventana de conteo, vigencia de la
     // cotización y velocidad media para estimar el tiempo de recorrido.
     DEMANDA_VENTANA_MS: z.coerce.number().int().min(1000).default(300000),

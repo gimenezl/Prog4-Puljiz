@@ -33,6 +33,7 @@ export const TARIFA_DE_PRUEBA = Object.freeze({
 export const ORIGEN = Object.freeze({ lat: -34.6037, lng: -58.3816 });
 export const DESTINO = Object.freeze({ lat: -34.6083, lng: -58.3712 });
 export const VIGENCIA_UBICACION_MS = 60_000;
+export const RADIO_BUSQUEDA_M = 5000;
 
 /**
  * Kit de viajes con adaptadores en memoria. Cada llamada crea un grafo aislado
@@ -116,6 +117,7 @@ export function crearKitViajes({
       repositorioUbicaciones,
       reloj,
       vigenciaUbicacionMs: VIGENCIA_UBICACION_MS,
+      radioBusquedaM: RADIO_BUSQUEDA_M,
     }),
     obtenerPerfilChofer: crearObtenerPerfilChofer({ repositorioChoferes }),
     actualizarDisponibilidadChofer: crearActualizarDisponibilidadChofer({

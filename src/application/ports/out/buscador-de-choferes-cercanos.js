@@ -1,10 +1,22 @@
 /**
- * Puerto de salida: BuscadorDeChoferesCercanos.
+ * Puerto de salida: BuscadorDeChoferesCercanos (RF-06, ADR-0006).
  *
  * Contrato:
- *   buscar(origen, criterios, ahora): Promise<ChoferElegible[]>
+ *   buscar({ origen, radioM, limite, ahora, vigenciaUbicacionMs }, ejecutor?)
+ *     : Promise<Array<{ choferId: string, distanciaM: number }>>
  *
- * Solo devuelve choferes habilitados, disponibles, libres y con ubicación
- * vigente reciente. La proximidad y el límite de candidatos son configurables.
+ * Devuelve los choferes elegibles más cercanos al origen, ordenados por
+ * distancia ascendente y como máximo `limite`. Elegible significa habilitado,
+ * disponible, libre (sin viaje activo) y con una ubicación recibida hace menos
+ * de `vigenciaUbicacionMs` respecto de `ahora`. `distanciaM` está en metros
+ * enteros.
+ *
+ * El adaptador real filtra y ordena en la base con un índice espacial: nunca
+ * trae todos los choferes a JavaScript.
+ *
+ * Adaptadores:
+ * - real:  src/infrastructure/adapters/out/geografia/postgis-buscador-de-choferes.js
+ * - falso: src/infrastructure/adapters/out/geografia/javascript-buscador-de-choferes.js
+ *          (filtra en JavaScript; también es el mecanismo de comparación de la medición)
  */
 export {};

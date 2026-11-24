@@ -111,6 +111,29 @@ export class PostgresViajeRepository {
     return rows.map(mapearViaje);
   }
 
+  /**
+   * Viajes SOLICITADO cuyo origen está a `radioM` metros o menos del punto,
+   * del más cercano al más lejano (RF-06). Usa el índice GiST parcial
+   * viajes_origen_solicitados_idx. ST_MakePoint recibe (longitud, latitud).
+   */
+  async listarSolicitadosCerca(punto, radioM, limite = 50, ejecutor) {
+    const { rows } = await this.#ejecutor(ejecutor).query(
+      `WITH centro AS (
+         SELECT ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS punto
+       )
+       SELECT ${CAMPOS}, ROUND(ST_Distance(origen, centro.punto))::integer AS distancia_m
+         FROM viajes
+         CROSS JOIN centro
+        WHERE estado = 'SOLICITADO'
+          AND ST_DWithin(origen, centro.punto, $3)
+        ORDER BY origen <-> centro.punto, solicitado_en ASC, id ASC
+        LIMIT $4`,
+      [punto.lng, punto.lat, radioM, limite],
+    );
+
+    return rows.map((fila) => ({ viaje: mapearViaje(fila), distanciaM: fila.distancia_m }));
+  }
+
   async listarActivosDesde(desde, ejecutor) {
     const { rows } = await this.#ejecutor(ejecutor).query(
       `SELECT ${CAMPOS}

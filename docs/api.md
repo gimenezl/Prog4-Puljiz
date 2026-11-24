@@ -574,8 +574,8 @@ Con la tarifa por defecto: `100000 + round(4,777 km × 50000) = 338850`, acotado
 #### `GET /viajes/disponibles`
 
 - **Roles:** `CHOFER`. Además, el chofer debe estar **habilitado, disponible, libre y con una ubicación reciente** (`PUT /choferes/yo/ubicacion` hace menos de `UBICACION_VIGENCIA_MS`).
-- **Descripción:** lista hasta 50 viajes `SOLICITADO` (no hay parámetros de paginación ni filtro geográfico). La lista es orientativa: al aceptar se vuelve a validar todo.
-- **Éxito:** `200 OK`
+- **Descripción:** lista hasta 50 viajes `SOLICITADO` cuyo origen está a `BUSQUEDA_RADIO_M` metros o menos (5000 por defecto) de la **ubicación vigente del chofer**, del más cercano al más lejano (RF-06). Cada viaje trae `distanciaM`: la distancia en metros desde el chofer hasta el origen, calculada por PostGIS. La búsqueda usa el índice GiST parcial `viajes_origen_solicitados_idx` (ADR-0006). La lista es orientativa: al aceptar se vuelve a validar todo.
+- **Éxito:** `200 OK`. Ejemplo con el chofer en Congreso y el viaje en el Obelisco:
 
 ```json
 {
@@ -584,22 +584,25 @@ Con la tarifa por defecto: `100000 + round(4,777 km × 50000) = 338850`, acotado
       "id": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
       "pasajeroId": "3f1c2a9e-5b7d-4c11-9a2e-0d4b6f8e1a01",
       "origen": { "lat": -34.6037, "lng": -58.3816 },
-      "destino": { "lat": -34.5889, "lng": -58.4306 },
-      "distanciaEstimadaM": 4777,
-      "precioFijadoCentavos": 338850,
+      "destino": { "lat": -34.6097, "lng": -58.3925 },
+      "distanciaEstimadaM": 1200,
+      "precioFijadoCentavos": 160000,
       "cotizacionId": null,
       "multiplicadorFijado": "1.0000",
       "choferId": null,
       "estado": "SOLICITADO",
-      "solicitadoEn": "2026-11-12T00:18:36.675Z",
+      "solicitadoEn": "2026-11-23T15:59:04.411Z",
       "asignadoEn": null,
       "cerradoEn": null,
       "canceladoPorId": null,
-      "motivoCancelacion": null
+      "motivoCancelacion": null,
+      "distanciaM": 1201
     }
   ]
 }
 ```
+
+Si no hay viajes dentro del radio, responde `{ "viajes": [] }`.
 
 - **Errores:**
 
@@ -1067,6 +1070,8 @@ Cuando el chofer tenga un viaje activo, `PUT /choferes/yo/ubicacion` también ag
 
 Todas: **Propuesto — tarjeta E3 · ofertas y asignación**. Reemplazan a `GET /viajes/disponibles` y `POST /viajes/{id}/aceptar` (§8, D2).
 
+Los candidatos de cada oferta salen del puerto `BuscadorDeChoferesCercanos`, **ya implementado** con PostGIS (RF-06): devuelve hasta `BUSQUEDA_MAX_CANDIDATOS` (10) choferes elegibles dentro de `BUSQUEDA_RADIO_M` (5000 m), del más cercano al más lejano. Medición en `docs/mediciones.md` §1.
+
 Forma de la oferta:
 
 ```json
@@ -1390,7 +1395,7 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 | # | Diferencia | Modelo o ADR | Código hoy | Tarjeta que la resuelve |
 |---|---|---|---|---|
 | D1 | ~~El viaje se crea directo, sin cotización.~~ **Resuelto; queda una ruta legacy.** | El viaje nace al **confirmar una cotización** y guarda `cotizacionId` y `multiplicadorFijado` (§4.10, §6.1; ADR-0005). | Ya existe el flujo `POST /cotizaciones` → `POST /cotizaciones/{id}/confirmar`, que fija precio y multiplicador y guarda la trazabilidad. `POST /viajes` se conserva como ruta provisional con tarifa por distancia; los viajes confirmados no se recalculan. | Resuelto en E2 · RF-17 + RF-18 + RF-19; queda decidir cuándo retirar `POST /viajes` |
-| D2 | No hay ofertas. | El viaje se **ofrece** a choferes elegibles y se acepta una oferta con vencimiento (§4.11, §6.2). | Cualquier chofer elegible ve todos los viajes `SOLICITADO` en `GET /viajes/disponibles` y acepta el viaje directamente. | E3 · ofertas y asignación |
+| D2 | No hay ofertas. | El viaje se **ofrece** a choferes elegibles y se acepta una oferta con vencimiento (§4.11, §6.2). | Cualquier chofer elegible ve los viajes `SOLICITADO` cercanos en `GET /viajes/disponibles` y acepta el viaje directamente. | E3 · ofertas y asignación |
 | D3 | ~~La elegibilidad no mira la ubicación.~~ **Resuelta.** | Chofer elegible = habilitado, disponible, libre **y con ubicación vigente reciente** (§2, I5). | Listar y aceptar viajes exigen una ubicación de menos de `UBICACION_VIGENCIA_MS` (60 s por defecto). | Resuelta en E2 · RF-02 + RF-03 |
 | D4 | ~~Habilitar no exige vehículo.~~ **Resuelta.** | Habilitar exige un vehículo registrado (§6.4, Q11, propuesta). | Habilitar sin vehículo responde `409 CHOFER_SIN_VEHICULO`; el vehículo no se puede borrar. | Resuelta en E2 · RF-02 + RF-03 |
 | D5 | Faltan estados del viaje. | `CHOFER_EN_CAMINO`, `EN_CURSO`, `FINALIZADO`, `CANCELADO_POR_CHOFER`, `CANCELADO_POR_SOPORTE` y `SIN_CHOFERES_DISPONIBLES` con sus transiciones (§6.1). | La entidad `Viaje` del dominio no tiene `CHOFER_EN_CAMINO` ni `EN_CURSO` (la migración `002_viajes.sql` sí los admite), y solo hay transiciones `SOLICITADO → ASIGNADO` y cancelación por pasajero. | E3 · ofertas y asignación, E4 · tarifa y cobro |
@@ -1400,7 +1405,7 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 | D9 | ~~Tarifa provisional distinta de la del modelo.~~ **Resuelta para el flujo nuevo.** | `Tarifa` versionada con `base`, `porKm`, `porMinuto` y `precioMaximo`; sin mínimo (§4.7, §7.2). | La cotización usa la tarifa publicada en la base, con componente por minuto y sin mínimo. `POST /viajes` sigue usando las variables `TARIFA_*` y el mínimo histórico hasta que se retire. | Resuelta en E2 · RF-23 + RF-16 |
 | D10 | Soporte no ve usuarios. | El operador ve los datos básicos de los participantes de los viajes que atiende (§3). | `GET /usuarios/{id}` solo admite al propio usuario y al administrador; soporte recibe 403. | E5 · historial y soporte |
 | D11 | Soporte y administrador no ven el perfil de chofer. | Ambos pueden ver el chofer y su vehículo (§3). | Solo existen `GET /choferes/yo` y `GET /choferes/yo/vehiculo`, limitados a `CHOFER`, aunque los casos de uso ya admiten al administrador y a soporte. Se propone `GET /choferes/{usuarioId}` (§5.4). | E5 · historial y soporte |
-| D12 | El chofer ve todos los viajes solicitados. | El chofer ve solo los viajes que se le **ofrecieron** o asignaron (§3). | `GET /viajes/disponibles` muestra cualquier viaje `SOLICITADO`, con el `pasajeroId`. Se resuelve con las ofertas (D2). | E3 · ofertas y asignación |
+| D12 | El chofer ve todos los viajes solicitados. | El chofer ve solo los viajes que se le **ofrecieron** o asignaron (§3). | **En parte resuelta:** `GET /viajes/disponibles` ya muestra solo los viajes dentro de `BUSQUEDA_RADIO_M` de la ubicación del chofer (RF-06), pero todavía sin ofertas y con el `pasajeroId`. El buscador de choferes cercanos para las ofertas ya está implementado y medido. Se completa con las ofertas (D2). | E3 · ofertas y asignación |
 | D13 | El administrador no crea cuentas del personal. | El administrador crea operadores y administradores (§3, Q7, propuesta). | Solo el seed las crea (ADR-0003 lo admite como estado actual). Se propone `POST /usuarios` (§5.1). | E1 · RF-01 y base transversal |
 | D14 | Un único código para dos tipos de 403. | `TRANSICION_INVALIDA` cubre también «el actor no puede ejecutarlo» (§9.1). | El código usa `403 NO_AUTORIZADO` tanto para el rol como para el recurso. Se propone mantener `NO_AUTORIZADO` para permisos y reservar `TRANSICION_INVALIDA` para el estado, y actualizar §9.1 del modelo. | E1 · RF-01 y base transversal |
 | D15 | Dos códigos para 404. | — | Recurso inexistente → `NO_ENCONTRADO`; ruta inexistente → `RECURSO_NO_ENCONTRADO`. Es intencional, pero el cliente debe conocer ambos. | E1 · RF-01 y base transversal (decidir si se unifican) |

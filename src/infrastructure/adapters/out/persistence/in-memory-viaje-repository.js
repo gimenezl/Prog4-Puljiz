@@ -1,5 +1,6 @@
 import { ESTADOS_DEMANDA_ACTIVA, ESTADOS_VIAJE } from '../../../../domain/entities/viaje.js';
 import { ErrorDeDominio } from '../../../../domain/errors/error-de-dominio.js';
+import { PuntoGeografico } from '../../../../domain/value-objects/punto-geografico.js';
 
 const ESTADOS_ACTIVOS = new Set(ESTADOS_DEMANDA_ACTIVA);
 
@@ -41,6 +42,23 @@ export class InMemoryViajeRepository {
         const diferencia = a.solicitadoEn.getTime() - b.solicitadoEn.getTime();
         return diferencia !== 0 ? diferencia : a.id.localeCompare(b.id);
       })
+      .slice(0, limite);
+  }
+
+  /** Igual que el adaptador real, pero midiendo la distancia con Haversine. */
+  async listarSolicitadosCerca(punto, radioM, limite = 50, _ejecutor) {
+    const centro = new PuntoGeografico(punto);
+
+    return [...this.#porId.values()]
+      .filter((viaje) => viaje.estado === ESTADOS_VIAJE.SOLICITADO)
+      .map((viaje) => ({ viaje, distanciaM: Math.round(centro.distanciaA(viaje.origen)) }))
+      .filter(({ distanciaM }) => distanciaM <= radioM)
+      .sort(
+        (a, b) =>
+          a.distanciaM - b.distanciaM ||
+          a.viaje.solicitadoEn.getTime() - b.viaje.solicitadoEn.getTime() ||
+          a.viaje.id.localeCompare(b.viaje.id),
+      )
       .slice(0, limite);
   }
 

@@ -21,6 +21,7 @@
     "test:watch": "node --test --watch \"tests/**/*.test.js\"",
     "verificar": "node scripts/verificar-requerimientos.js",
     "verificar:postgres": "node scripts/verificar-requerimientos.js --postgres",
+    "medir:busqueda": "node scripts/medir-busqueda.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "audit:prod": "pnpm audit --prod",
