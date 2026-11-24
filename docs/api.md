@@ -1242,16 +1242,23 @@ Todas: **Propuesto — tarjeta E4 · parte Python**. Implementan ADR-0007 y `doc
   "desde": "2026-11-01T00:00:00.000Z",
   "hasta": "2026-11-08T00:00:00.000Z",
   "viajes": [
-    {
+        {
       "id": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
+      "zonaId": "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a20",
+      "iniciadoEn": "2026-11-02T13:56:00.000Z",
       "finalizadoEn": "2026-11-02T14:10:00.000Z",
       "duracionS": 840,
+      "subtotalCentavos": 238000,
       "tarifaFinalCentavos": 297500,
-      "multiplicador": "1.25"
+      "multiplicador": "1.25",
+      "solicitudesUsadas": 12,
+      "choferesDisponiblesUsados": 6,
+      "reglaVersion": 3
     }
   ]
 }
 ```
+- **Campos:** los que se suman a la propuesta original los usan la demanda por hora, el simulador y la auditoría de Python; ver `docs/python.md` §9.2.
 
 - **Errores:** `400 DATOS_INVALIDOS` (rango inválido), `401 NO_AUTENTICADO` (sin credencial o credencial incorrecta), `404 NO_ENCONTRADO` (zona inexistente).
 

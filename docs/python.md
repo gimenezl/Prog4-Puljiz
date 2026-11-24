@@ -194,3 +194,64 @@ simuladas de Node**.
 3. Consultar el reporte desde Node y comprobar los valores.
 4. Detener el contenedor de Python: el reporte en Node responde 503 y el flujo de
    viajes sigue funcionando.
+
+## 9. Alcance ampliado
+
+En la consulta del 19/11 el profesor pidió que la parte Python tenga más
+responsabilidades y más endpoints. Python se encarga entonces de **todo el análisis
+de los viajes finalizados**: reportes, comparaciones, simulaciones y auditoría.
+Así, el cálculo pesado corre fuera de Node y no afecta su event loop.
+
+### 9.1 Endpoints nuevos
+
+Todos piden la credencial de servicio (401 sin ella) y solo leen lo que Python ya
+guardó: no llaman a Node.
+
+| Método y ruta | Qué hace |
+| --- | --- |
+| `GET /reportes/zonas` | Ranking de zonas por recaudación y por porcentaje de viajes con multiplicador. |
+| `GET /reportes/zonas/{zonaId}/demanda-por-hora` | Viajes, tarifa promedio y multiplicador promedio por franja horaria (0 a 23 h). |
+| `POST /simulaciones/regla-multiplicador` | Recibe una regla propuesta (umbrales, mínimo y máximo) y estima cuánto se hubiera cobrado con ella en el período, comparado con lo cobrado de verdad. |
+| `GET /auditoria/precios` | Lista los viajes cuyo multiplicador o precio no coincide con lo que da la regla con los datos de demanda guardados. |
+
+### 9.2 Datos extra que necesita de Node
+
+El endpoint de integración de la sección 3.1 suma estos campos por viaje, sin datos
+personales:
+
+```json
+{
+  "id": "…",
+  "zonaId": "…",
+  "iniciadoEn": "2026-11-02T13:56:00Z",
+  "finalizadoEn": "2026-11-02T14:10:00Z",
+  "duracionS": 840,
+  "subtotalCentavos": 238000,
+  "tarifaFinalCentavos": 297500,
+  "multiplicador": "1.25",
+  "solicitudesUsadas": 12,
+  "choferesDisponiblesUsados": 6,
+  "reglaVersion": 3
+}
+```
+
+- `iniciadoEn`: para la demanda por hora.
+- `subtotalCentavos` (precio antes del multiplicador), `solicitudesUsadas`,
+  `choferesDisponiblesUsados` y `reglaVersion`: para el simulador y la auditoría.
+  Ya están guardados en la cotización de cada viaje.
+
+### 9.3 Orden de trabajo
+
+Primero lo necesario para la demostración de la sección 8; después, lo ampliado.
+
+1. Cálculo de indicadores (hecho, PR #7).
+2. Este documento.
+3. API con `/health` y credencial de servicio.
+4. Guardado de reportes en SQLite.
+5. Actualizar y consultar el reporte, con Node simulado.
+6. Endpoint de integración en Node y servicio en Docker Compose (la demo funciona).
+7. Ranking de zonas y demanda por hora.
+8. Simulador de reglas del multiplicador.
+9. Auditoría de precios.
+
+Pendiente de confirmar: si la API se hace con FastAPI (propuesta) o con Django.
