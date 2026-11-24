@@ -5,8 +5,8 @@ como un **servicio aparte**, con su propio código, base y tests, que se comunic
 con el backend de Node.js **solamente por API HTTP**. La decisión y sus
 alternativas están en [ADR-0007](adr/0007-servicio-python-integrado-por-http.md).
 
-> Estado: **planificado**. Todavía no hay código Python. Este documento fija el
-> alcance y el contrato para empezar.
+> Estado: **en desarrollo**. El cálculo de indicadores ya está hecho (PR #7). El
+> alcance se amplió en la sección 9 por pedido del profesor.
 
 ## 1. Qué hace y qué no hace
 
@@ -23,7 +23,9 @@ No hace:
 
 - nada del flujo principal: pedir, cotizar, asignar, cancelar o cobrar viajes sigue
   siendo de Node.js;
-- predicciones, mapas, inteligencia de rutas ni recálculo de precios;
+- predicciones, mapas ni inteligencia de rutas;
+- cambios en los precios reales: el simulador de la sección 9 solo estima qué
+  hubiera pasado con otra regla, sin tocar ningún viaje;
 - acceso a la base PostgreSQL de Node.
 
 Node.js sigue siendo la **fuente oficial** de viajes, cotizaciones, zonas y
