@@ -18,3 +18,11 @@ def test_health_no_acepta_post():
     respuesta = cliente.post("/health")
 
     assert respuesta.status_code == 405
+
+
+def test_health_no_exige_credencial(settings):
+    settings.REPORTES_SERVICE_TOKEN = "token-de-prueba"
+
+    respuesta = APIClient().get("/health")
+
+    assert respuesta.status_code == 200

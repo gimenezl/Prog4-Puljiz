@@ -32,7 +32,9 @@ ALLOWED_HOSTS = [
     host for host in os.environ.get('REPORTES_ALLOWED_HOSTS', '').split(',') if host
 ]
 
-
+# Token compartido con Node. Sin token configurado, el servicio rechaza todo
+# (falla cerrado). Se define con la variable de entorno REPORTES_SERVICE_TOKEN.
+REPORTES_SERVICE_TOKEN = os.environ.get('REPORTES_SERVICE_TOKEN', '')
 
 # Application definition
 
@@ -130,3 +132,14 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Django REST Framework: por defecto todos los endpoints exigen la
+# credencial de servicio. /health la desactiva explícitamente.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'reportes_api.autenticacion.CredencialDeServicio',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
