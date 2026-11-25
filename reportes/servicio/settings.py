@@ -37,6 +37,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # Django REST Framework: facilita armar APIs que devuelven JSON.
+    'rest_framework',
+    # Nuestra app: acá viven los endpoints del servicio de reportes.
+    'reportes_api',
 ]
 
 MIDDLEWARE = [
