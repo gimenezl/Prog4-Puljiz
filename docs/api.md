@@ -1242,7 +1242,7 @@ Todas: **Propuesto — tarjeta E4 · parte Python**. Implementan ADR-0007 y `doc
   "desde": "2026-11-01T00:00:00.000Z",
   "hasta": "2026-11-08T00:00:00.000Z",
   "viajes": [
-        {
+    {
       "id": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
       "zonaId": "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a20",
       "iniciadoEn": "2026-11-02T13:56:00.000Z",
