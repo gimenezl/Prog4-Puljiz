@@ -9,7 +9,7 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
-
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -19,13 +19,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-51xy^5!jjh#xwyr^@m6o2!0n8!#yp*b-i^*5vl&#+&qx!ekc2r'
+# La configuración se lee de variables de entorno. Si no están definidas,
+# se usan valores de desarrollo para que el servicio ande en tu PC sin
+# configurar nada. En producción hay que definirlas.
+SECRET_KEY = os.environ.get('REPORTES_SECRET_KEY', 'clave-solo-para-desarrollo')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# DEBUG solo está activo si la variable vale exactamente "true".
+DEBUG = os.environ.get('REPORTES_DEBUG', 'true').lower() == 'true'
 
-ALLOWED_HOSTS = []
+# Lista de hosts permitidos, separados por coma. Ej: "reportes,localhost"
+ALLOWED_HOSTS = [
+    host for host in os.environ.get('REPORTES_ALLOWED_HOSTS', '').split(',') if host
+]
+
 
 
 # Application definition
