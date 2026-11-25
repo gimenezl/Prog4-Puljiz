@@ -1,1 +1,5 @@
-pytest
+django==5.2.*
+djangorestframework==3.16.*
+httpx==0.28.*
+pytest==9.*
+pytest-django==4.11.*
