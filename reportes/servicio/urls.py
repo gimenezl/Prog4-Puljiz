@@ -17,6 +17,10 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from reportes_api.views import health
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # GET /health: el servicio responde que está vivo.
+    path('health', health),
 ]
