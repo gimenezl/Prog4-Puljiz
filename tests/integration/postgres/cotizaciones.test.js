@@ -377,4 +377,47 @@ describirPostgres('cotizaciones inmutables y precio fijado (RF-23 + ADR-0005)', 
       assert.equal(Number(viajes[0].multiplicador_fijado), Number(vista.multiplicador));
     }
   });
+
+  test('confirmaciones simultáneas de la misma cotización generan un solo viaje', async () => {
+    await prepararConfiguracion();
+    const vista = await recalcular();
+
+    const resultados = await Promise.allSettled(
+      Array.from({ length: 10 }, (_, i) =>
+        kit.confirmar({
+          cotizacionId: vista.id,
+          pasajeroId: PASAJERO_ID,
+          claveIdempotencia: `doble-${i}`,
+        }),
+      ),
+    );
+
+    const ganadoras = resultados.filter((r) => r.status === 'fulfilled');
+    const perdedoras = resultados.filter((r) => r.status === 'rejected');
+    assert.equal(ganadoras.length, 1);
+    assert.deepEqual(
+      [...new Set(perdedoras.map((r) => r.reason.codigo))],
+      ['COTIZACION_YA_CONFIRMADA'],
+    );
+    assert.equal((await viajeDe(vista.id)).length, 1);
+  });
+
+  test('la misma clave enviada a la vez devuelve el mismo viaje a todos', async () => {
+    await prepararConfiguracion();
+    const vista = await recalcular();
+
+    const resultados = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        kit.confirmar({
+          cotizacionId: vista.id,
+          pasajeroId: PASAJERO_ID,
+          claveIdempotencia: 'misma-clave-simultanea',
+        }),
+      ),
+    );
+
+    assert.equal(new Set(resultados.map((r) => r.viaje.id)).size, 1);
+    assert.equal(resultados.filter((r) => !r.reutilizada).length, 1);
+    assert.equal((await viajeDe(vista.id)).length, 1);
+  });
 });
