@@ -1040,6 +1040,16 @@ Ningún importe ni multiplicador lo envía el cliente.
 
 - **Reintento con la misma clave y la misma cotización:** `200 OK` con
   `Idempotency-Replayed: true` y el viaje original, aunque la demanda cambió.
+- **Confirmaciones simultáneas:** la fila de la cotización se bloquea
+  (`SELECT ... FOR UPDATE`) antes de buscar la clave, así que se ejecutan de a
+  una. Con la **misma** clave, todas reciben el mismo viaje; con claves
+  **distintas**, una crea el viaje y las demás reciben
+  `409 COTIZACION_YA_CONFIRMADA`. Nunca se crean dos viajes (además, la base tiene
+  `viajes.cotizacion_id` único).
+- **Carrera con el recálculo (RF-19):** cotizar de nuevo o publicar una regla nueva
+  mientras se confirma no altera el viaje: queda con el precio y el multiplicador
+  de la cotización confirmada. Lo prueban los tests de
+  `tests/integration/postgres/cotizaciones.test.js` en los dos órdenes y a la vez.
 - **Errores:**
 
 | HTTP | Código | Causa |
