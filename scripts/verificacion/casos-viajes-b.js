@@ -3,7 +3,7 @@
  * conflictos de idempotencia y autorización del cobro.
  */
 
-import { aceptarViaje, crearViaje, finalizarViaje } from './flujos.js';
+import { aceptarViaje, crearViaje, finalizarViaje, ponerEnCurso } from './flujos.js';
 import { usuario } from './contexto.js';
 import {
   afirmar,
@@ -28,6 +28,7 @@ export const casosViajesB = [
       const { id, viaje } = await crearViaje(contexto);
 
       await aceptarViaje(contexto, id, 'chofer1');
+      await ponerEnCurso(contexto, id, 'chofer1');
       const {
         respuesta,
         viaje: finalizado,
@@ -38,6 +39,7 @@ export const casosViajesB = [
 
       afirmarEstado(respuesta, 200, 'finalizar y cobrar');
       afirmar(finalizado.estado === 'FINALIZADO', 'El viaje no quedó FINALIZADO.');
+      afirmar(finalizado.iniciadoEn !== null, 'El viaje finalizado no tiene iniciadoEn.');
       afirmar(finalizado.cerradoEn !== null, 'El viaje finalizado no tiene cerradoEn.');
       afirmar(finalizado.id === id, 'La finalización devolvió otro viaje.');
       afirmar(cobro.estado === 'COBRADO', 'El cobro no quedó COBRADO.');
@@ -91,6 +93,7 @@ export const casosViajesB = [
     async ejecutar(contexto) {
       const { id } = await crearViaje(contexto);
       await aceptarViaje(contexto, id, 'chofer1');
+      await ponerEnCurso(contexto, id, 'chofer1');
       const clave = claveDePrueba(contexto, 'pm07-final');
       const primera = await finalizarViaje(contexto, id, { clave });
       const antesDelReplay = cantidadDeCobrosSimulados(contexto);
@@ -136,6 +139,7 @@ export const casosViajesB = [
 
       const viajeA = await crearViaje(contexto);
       await aceptarViaje(contexto, viajeA.id, 'chofer1');
+      await ponerEnCurso(contexto, viajeA.id, 'chofer1');
       await finalizarViaje(contexto, viajeA.id, { clave: claveA });
 
       const otraClave = await contexto.solicitar(`/viajes/${viajeA.id}/finalizar`, {
@@ -148,6 +152,7 @@ export const casosViajesB = [
 
       const viajeB = await crearViaje(contexto);
       await aceptarViaje(contexto, viajeB.id, 'chofer1');
+      await ponerEnCurso(contexto, viajeB.id, 'chofer1');
 
       const cobroAntes = await contexto.solicitar(`/viajes/${viajeB.id}/cobro`, {
         token: pasajero.token,
@@ -167,12 +172,12 @@ export const casosViajesB = [
         'clave de finalización reutilizada',
       );
 
-      const bSigueAsignado = await contexto.solicitar(`/viajes/${viajeB.id}`, {
+      const bSigueEnCurso = await contexto.solicitar(`/viajes/${viajeB.id}`, {
         token: pasajero.token,
       });
-      afirmarEstado(bSigueAsignado, 200, 'viaje B después del conflicto');
+      afirmarEstado(bSigueEnCurso, 200, 'viaje B después del conflicto');
       afirmar(
-        bSigueAsignado.datos.viaje.estado === 'ASIGNADO',
+        bSigueEnCurso.datos.viaje.estado === 'EN_CURSO',
         'El conflicto de clave no debía modificar el segundo viaje.',
       );
 
@@ -186,6 +191,7 @@ export const casosViajesB = [
 
       const viajeC = await crearViaje(contexto);
       await aceptarViaje(contexto, viajeC.id, 'chofer1');
+      await ponerEnCurso(contexto, viajeC.id, 'chofer1');
       const antesConcurrente = cantidadDeCobrosSimulados(contexto);
       const [concurrenteA, concurrenteB] = await Promise.all([
         contexto.solicitar(`/viajes/${viajeC.id}/finalizar`, {
@@ -245,6 +251,7 @@ export const casosViajesB = [
     async ejecutar(contexto) {
       const { id } = await crearViaje(contexto);
       await aceptarViaje(contexto, id, 'chofer1');
+      await ponerEnCurso(contexto, id, 'chofer1');
       const { cobro } = await finalizarViaje(contexto, id, {
         clave: claveDePrueba(contexto, 'pm09-final'),
       });

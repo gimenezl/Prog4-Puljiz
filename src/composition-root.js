@@ -74,6 +74,8 @@ import { crearAceptarViaje } from './application/use-cases/viajes/aceptar-viaje.
 import { crearCancelarViaje } from './application/use-cases/viajes/cancelar-viaje.js';
 import { crearCrearViaje } from './application/use-cases/viajes/crear-viaje.js';
 import { crearFinalizarViaje } from './application/use-cases/viajes/finalizar-viaje.js';
+import { crearIniciarViaje } from './application/use-cases/viajes/iniciar-viaje.js';
+import { crearMarcarEnCamino } from './application/use-cases/viajes/marcar-en-camino.js';
 import { crearListarViajesDisponibles } from './application/use-cases/viajes/listar-viajes-disponibles.js';
 import { crearObtenerCobro } from './application/use-cases/viajes/obtener-cobro.js';
 import { crearObtenerViaje } from './application/use-cases/viajes/obtener-viaje.js';
@@ -230,6 +232,15 @@ export function composeApplication(entorno) {
     reloj,
     vigenciaUbicacionMs: entorno.UBICACION_VIGENCIA_MS,
   });
+  const marcarEnCamino = crearMarcarEnCamino({
+    repositorioViajes,
+    unidadDeTrabajo,
+  });
+  const iniciarViaje = crearIniciarViaje({
+    repositorioViajes,
+    unidadDeTrabajo,
+    reloj,
+  });
   const cancelarViaje = crearCancelarViaje({
     repositorioViajes,
     repositorioChoferes,
@@ -381,6 +392,8 @@ export function composeApplication(entorno) {
     viajes: {
       crearViaje,
       aceptarViaje,
+      marcarEnCamino,
+      iniciarViaje,
       cancelarViaje,
       finalizarViaje,
       obtenerViaje,

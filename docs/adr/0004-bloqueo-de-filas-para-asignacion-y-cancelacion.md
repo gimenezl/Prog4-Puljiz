@@ -1,6 +1,7 @@
 # ADR-0004: Bloqueo de filas en orden fijo para asignar y cancelar viajes
 
-- **Estado:** Aceptado (falta completar las ofertas con vencimiento y el test de 50 aceptaciones)
+- **Estado:** Aceptado y actualizado: el test de 50 aceptaciones contra
+  PostgreSQL está resuelto; las ofertas con vencimiento siguen pendientes (D4)
 - **Fecha:** 2026-11-11
 - **Participantes:** Lucas Gimenez, Guido Ayala, Enzo Vernet
 - **Tarjeta:** E3 · ADR de asignación y cancelación
@@ -14,12 +15,14 @@ chofer (`docs/modelo.md`, sección 9):
 | --- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | C1  | Muchos choferes aceptan el mismo viaje (RF-08)          | Gana exactamente uno; el resto recibe un rechazo claro.                                                                                     |
 | C2  | Un chofer acepta dos viajes distintos a la vez          | Obtiene como máximo uno.                                                                                                                    |
-| C3  | Aceptación contra cancelación del pasajero (RF-10)      | O se cancela antes (la aceptación falla) o se asigna y después se cancela liberando al chofer. Nunca un viaje cancelado con chofer ocupado. |
-| C4  | Aceptación contra vencimiento de la oferta (RF-07)      | Una oferta vencida no se puede aceptar. _Pendiente: todavía no hay ofertas._                                                                |
+| C3  | Aceptación contra cancelación del pasajero (RF-10)      | O se cancela antes (la aceptación falla con `VIAJE_NO_DISPONIBLE`) o se asigna y después se cancela liberando al chofer. Nunca un viaje cancelado con chofer ocupado. |
+| C4  | Aceptación contra vencimiento de la oferta (RF-07)      | Una oferta vencida no se puede aceptar. _Pendiente: todavía no hay ofertas (D4)._                                                          |
 | C5  | Dos pedidos con la misma clave de idempotencia          | Se crea un solo viaje y ambos reciben la misma respuesta.                                                                                   |
 | C6  | Confirmación contra recálculo del multiplicador (RF-19) | Ver ADR-0005.                                                                                                                               |
-| C7  | Reintento del cobro simulado (RF-13)                    | Un solo cobro. _Pendiente._                                                                                                                 |
+| C7  | Reintento del cobro simulado (RF-13)                    | Un solo cobro: clave de idempotencia por chofer más `viaje_id UNIQUE` en `cobros_simulados`. Resuelto.                                      |
 | C8  | Cambio de disponibilidad del chofer mientras acepta     | La aceptación ve un estado coherente del chofer.                                                                                            |
+| C9  | `en-camino` contra cancelación del pasajero             | No es «un solo ganador»: por D3 el pasajero puede cancelar desde `CHOFER_EN_CAMINO`, así que ambas operaciones pueden completarse en serie. El invariante es de coherencia: `CHOFER_EN_CAMINO` con chofer ocupado o `CANCELADO_POR_PASAJERO` con chofer libre. |
+| C10 | `finalizar` contra cancelación del chofer               | Por R10-04 el chofer no puede cancelar desde `EN_CURSO`: `finalizar` gana siempre. No hay doble cobro y el chofer queda libre. No existe la rama «gana la cancelación» con el estado actual. |
 
 Hay que elegir un mecanismo atómico que resuelva estas carreras sin
 interbloqueos y que se pueda probar contra la base real.
@@ -71,6 +74,20 @@ Cómo se resuelve cada carrera hoy:
   cancelado con el chofer liberado en la misma transacción) quedan definidos en
   `cancelar-viaje.js`.
 - **C5:** ver ADR-0002 (índice único `(alcance, clave)` e `INSERT ... ON CONFLICT DO NOTHING`).
+- **C9:** las dos operaciones bloquean el viaje y se ejecutan en serie. Si gana
+  `en-camino`, el viaje queda `CHOFER_EN_CAMINO` con el chofer ocupado y la
+  cancelación del pasajero todavía puede completarse después (D3); si gana la
+  cancelación primero, `en-camino` recibe `TRANSICION_INVALIDA`. El invariante
+  es de coherencia, no de un único ganador: nunca un viaje cancelado con chofer
+  ocupado.
+- **C10:** `finalizar` exige `EN_CURSO` y el chofer no puede cancelar en ese
+  estado (R10-04), por lo que la cancelación no es alcanzable: gana siempre la
+  finalización, con un solo cobro y el chofer libre.
+- La «escritura condicional» del requerimiento se implementa como
+  `SELECT ... FOR UPDATE` del viaje más validación de dominio antes del
+  `UPDATE`, no como `UPDATE ... WHERE estado = origen`. Desde un estado terminal,
+  `asignar()` devuelve `VIAJE_NO_DISPONIBLE` y no `TRANSICION_INVALIDA` (C3,
+  decisión cerrada).
 
 Segunda línea de defensa en la base (`db/migrations/002_viajes.sql`):
 
@@ -81,14 +98,18 @@ Segunda línea de defensa en la base (`db/migrations/002_viajes.sql`):
 
 ## Consecuencias
 
-- Verificado contra PostgreSQL real en `tests/integration/postgres/postgres.test.js`:
-  20 aceptaciones concurrentes con un solo ganador, un chofer que no puede tomar
-  dos viajes, aceptación contra cancelación y misma clave concurrente.
-- **Pendiente:** la tarjeta exige al menos **50** aceptaciones simultáneas y
-  comprobar el estado final del viaje y del chofer. Hay que subir el test de 20 a 50.
-- **Pendiente:** cuando existan ofertas (RF-07), la oferta se bloquea **después**
-  del viaje y antes del chofer (orden: viaje → oferta → chofer), y el vencimiento
-  se compara con el reloj dentro de la transacción.
+- El test `50 aceptaciones concurrentes: exactamente un chofer gana` está en
+  `tests/integration/postgres/postgres.test.js:634`, junto a los de chofer que
+  no puede tomar dos viajes, aceptación contra cancelación, misma clave
+  concurrente, `iniciado_en` y transiciones. **Pasó en vivo** en la suite
+  `pnpm test:db:up` → `pnpm test:integration:db` → `pnpm test:db:down`: 48 tests
+  PostgreSQL reales, 48 pass, 0 fail, 0 skipped. La verificación HTTP contra la
+  misma base (`pnpm verificar:postgres`) dio 16 OK, 0 fail, 2 omitidos.
+- **Resuelto:** el test de aceptaciones concurrentes contra PostgreSQL tiene
+  **50** casos y se ejecutó con Docker; ya no hay que subirlo de 20 a 50.
+- **Pendiente por D4:** cuando existan ofertas (RF-07), la oferta se bloquea
+  **después** del viaje y antes del chofer (orden: viaje → oferta → chofer), y el
+  vencimiento se compara con el reloj dentro de la transacción.
 - Con muchos choferes compitiendo, las transacciones esperan en fila. La medición
   de E4 tiene que registrar el tiempo hasta la asignación.
 - Las transacciones tienen que ser cortas: nada de llamadas externas (notificaciones,

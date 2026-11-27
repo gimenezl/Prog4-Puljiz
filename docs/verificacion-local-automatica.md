@@ -1,5 +1,11 @@
 # Verificación local automática
 
+> **Nota de snapshot:** el resumen de 15 OK / 3 omitidos corresponde a
+> `pnpm verificar` sin base real. La ejecución actual también incluye
+> `pnpm verificar:postgres` con `pnpm test:db:up` previo: 16 OK, 0 fail, 2
+> omitidos (PM-17 con `--auditoria`, PM-18 con `--suite`). Ver
+> `docs/rf09-rf07-rf22-rf08-rf10-requerimientos-y-cambios.md` §3.4.
+
 Este documento explica `scripts/verificar-requerimientos.js`, un verificador
 que levanta la aplicación real en un puerto efímero y recorre por HTTP los
 requerimientos del trabajo final. A diferencia de `pnpm test`, que prueba cada

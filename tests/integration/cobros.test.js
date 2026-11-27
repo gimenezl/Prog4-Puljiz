@@ -141,6 +141,25 @@ function finalizarViaje(urlBase, token, viajeId, clave) {
   });
 }
 
+async function ponerEnCurso(urlBase, token, viajeId) {
+  const enCamino = await llamar(`${urlBase}/viajes/${viajeId}/en-camino`, {
+    method: 'POST',
+    token,
+  });
+  assert.equal(enCamino.respuesta.status, 200, 'marcar en camino');
+  assert.equal(enCamino.cuerpo.viaje.estado, 'CHOFER_EN_CAMINO');
+
+  const iniciado = await llamar(`${urlBase}/viajes/${viajeId}/iniciar`, {
+    method: 'POST',
+    token,
+  });
+  assert.equal(iniciado.respuesta.status, 200, 'iniciar viaje');
+  assert.equal(iniciado.cuerpo.viaje.estado, 'EN_CURSO');
+  assert.notEqual(iniciado.cuerpo.viaje.iniciadoEn, null);
+
+  return iniciado.cuerpo.viaje;
+}
+
 test('finalizar cobra una sola vez y el cobro se consulta según el rol', async (t) => {
   const composicion = await crearAplicacion(t);
   const { urlBase } = composicion;
@@ -180,6 +199,8 @@ test('finalizar cobra una sola vez y el cobro se consulta según el rol', async 
     token: chofer.token,
   });
   assert.equal(aceptacion.respuesta.status, 200);
+
+  await ponerEnCurso(urlBase, chofer.token, viajeId);
 
   const porRolIncorrecto = await finalizarViaje(urlBase, pasajero.token, viajeId, 'clave-1');
   assert.equal(porRolIncorrecto.respuesta.status, 403);
@@ -267,6 +288,7 @@ test('reutilizar la clave con otro viaje da 409 y no registra un cobro', async (
     method: 'POST',
     token: chofer.token,
   });
+  await ponerEnCurso(urlBase, chofer.token, primero.cuerpo.viaje.id);
 
   const finalizado = await finalizarViaje(
     urlBase,
@@ -288,6 +310,7 @@ test('reutilizar la clave con otro viaje da 409 y no registra un cobro', async (
     method: 'POST',
     token: chofer.token,
   });
+  await ponerEnCurso(urlBase, chofer.token, segundoId);
 
   const conflicto = await finalizarViaje(urlBase, chofer.token, segundoId, 'clave-compartida');
   assert.equal(conflicto.respuesta.status, 409);
@@ -296,7 +319,7 @@ test('reutilizar la clave con otro viaje da 409 y no registra un cobro', async (
   const viajeSinCambios = await llamar(`${urlBase}/viajes/${segundoId}`, {
     token: pasajero.token,
   });
-  assert.equal(viajeSinCambios.cuerpo.viaje.estado, 'ASIGNADO');
+  assert.equal(viajeSinCambios.cuerpo.viaje.estado, 'EN_CURSO');
   assert.equal(composicion.simuladorDeCobro.cantidadLlamadas, 1);
 
   const conOtraClave = await finalizarViaje(urlBase, chofer.token, segundoId, 'clave-nueva');
@@ -328,6 +351,7 @@ test('dos finalizaciones simultáneas por HTTP con la misma clave devuelven un s
     method: 'POST',
     token: chofer.token,
   });
+  await ponerEnCurso(urlBase, chofer.token, viajeId);
 
   const [a, b] = await Promise.all([
     finalizarViaje(urlBase, chofer.token, viajeId, 'misma-clave'),

@@ -12,8 +12,8 @@ La plataforma permite:
 - Multiplicador por demanda en cada zona, calculado en el servidor con una regla configurable y auditable.
 - Estimación de precio y tiempo antes de confirmar; el pasajero paga exactamente el precio que vio, aunque la demanda cambie después.
 - Solicitud de viajes y búsqueda de choferes cercanos.
-- Ofertas con vencimiento, aceptación exclusiva y cancelaciones resueltas correctamente aunque ocurran al mismo tiempo.
-- Seguimiento del viaje en tiempo real, tarifa final y cobro simulado.
+- Aceptación exclusiva, transiciones `ASIGNADO → CHOFER_EN_CAMINO → EN_CURSO → FINALIZADO` y cancelación actor-aware (pasajero dueño o chofer asignado), resueltas correctamente aunque ocurran al mismo tiempo.
+- Ofertas con vencimiento, seguimiento en tiempo real y tarifa final: pendientes (RF-07, RF-22 y E4). El cobro simulado sobre `precioFijadoCentavos` sí está implementado.
 - Historial de viajes y operador de soporte.
 
 ## Organización
@@ -79,6 +79,8 @@ en curso y cierra la pool de PostgreSQL. Si el cierre supera
   demanda, tarifas y reglas de multiplicador (RF-23 y RF-16).
 - `docs/rf23-rf16-requerimientos-y-cambios.md`: requerimientos, decisiones,
   cambios y verificaciones de la configuración administrativa versionada.
+- `docs/rf09-rf07-rf22-rf08-rf10-requerimientos-y-cambios.md`: estados del
+  viaje, cancelación actor-aware y ejecución manual (RF-07/RF-22 pendientes).
 - `docs/modelo.md`: modelo de dominio y diagramas.
 - `docs/api.md`: contrato de la API HTTP, códigos de error, rate limits y tabla de permisos.
 - `docs/mediciones.md`: mediciones con entorno, comandos y resultados (RF-06:
@@ -199,9 +201,11 @@ Endpoints:
 | `GET` | `/viajes/disponibles` | `CHOFER` habilitado, disponible y con ubicación reciente; solo viajes cercanos |
 | `GET` | `/viajes/:id` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` |
 | `POST` | `/viajes/:id/aceptar` | `CHOFER` habilitado, disponible y con ubicación reciente |
-| `POST` | `/viajes/:id/finalizar` | Chofer asignado, con `Idempotency-Key` |
+| `POST` | `/viajes/:id/en-camino` | Chofer asignado; `ASIGNADO → CHOFER_EN_CAMINO` |
+| `POST` | `/viajes/:id/iniciar` | Chofer asignado; `CHOFER_EN_CAMINO → EN_CURSO` (fija `iniciadoEn`) |
+| `POST` | `/viajes/:id/finalizar` | Chofer asignado; solo desde `EN_CURSO`, con `Idempotency-Key` |
 | `GET` | `/viajes/:id/cobro` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` |
-| `POST` | `/viajes/:id/cancelar` | `PASAJERO` dueño del viaje |
+| `POST` | `/viajes/:id/cancelar` | Pasajero dueño (`SOLICITADO`/`ASIGNADO`/`CHOFER_EN_CAMINO`) o chofer asignado (`ASIGNADO`/`CHOFER_EN_CAMINO`), con `{ "motivo" }` |
 | `GET` | `/choferes/yo` | `CHOFER` |
 | `PATCH` | `/choferes/yo` | `CHOFER`; únicamente `disponible` |
 | `GET` | `/choferes/yo/vehiculo` | `CHOFER` |
@@ -264,17 +268,31 @@ Endpoints:
   dos viajes a la vez, recibe `CHOFER_OCUPADO` y el viaje perdedor sigue
   `SOLICITADO`.
 - El orden global de bloqueo es **Viaje → Chofer**, igual para aceptar,
-  cancelar y cambiar disponibilidad. En PostgreSQL se usa
-  `SELECT ... FOR UPDATE`; los errores de serialización o interbloqueo se
-  reintentan un número limitado de veces.
-- Cancelar un viaje asignado libera al chofer en la misma transacción. Si la
-  cancelación compite con una aceptación, el viaje termina cancelado y ningún
-  chofer queda ocupado.
-- `POST /viajes/:id/finalizar` exige `Idempotency-Key`, finaliza el viaje,
-  libera al chofer y registra un cobro simulado en una sola transacción. La
-  clave se aísla por chofer y el cobro tiene `viaje_id` UNIQUE: un viaje no
-  puede cobrarse dos veces. El replay devuelve `200` con
-  `Idempotency-Replayed: true`.
+  cancelar, finalizar y cambiar disponibilidad. En PostgreSQL se usa
+  `SELECT ... FOR UPDATE` seguido de validación de dominio antes del `UPDATE`
+  (no `UPDATE ... WHERE estado = origen`); los errores de serialización o
+  interbloqueo se reintentan un número limitado de veces.
+- Las transiciones son `aceptar` → `en-camino` → `iniciar` → `finalizar`.
+  `iniciar` fija `iniciadoEn` (migración 013) y `finalizar` exige `EN_CURSO`.
+  Solo el chofer asignado puede ejecutarlas; un chofer ajeno recibe `403`.
+- `/cancelar` es **actor-aware**: decide por el vínculo con el viaje, no por el
+  rol. El pasajero dueño cancela desde `SOLICITADO`, `ASIGNADO` o
+  `CHOFER_EN_CAMINO`; el chofer asignado desde `ASIGNADO` o
+  `CHOFER_EN_CAMINO`. Si había chofer, se lo libera en la misma transacción;
+  nunca queda un viaje cancelado con chofer ocupado. No hay cancelación por
+  soporte (D8).
+- `marcarEnCamino` contra una cancelación del pasajero no es «un solo ganador»:
+  si el chofer marca primero, la cancelación también puede completarse después.
+  El invariante es de coherencia: `CHOFER_EN_CAMINO` con chofer ocupado o
+  `CANCELADO_POR_PASAJERO` con chofer libre. En cambio, `finalizar` gana siempre
+  contra una cancelación del chofer, porque R10-04 prohíbe cancelar desde
+  `EN_CURSO`.
+- `POST /viajes/:id/finalizar` exige `Idempotency-Key`, finaliza el viaje desde
+  `EN_CURSO`, libera al chofer y registra un cobro simulado en una sola
+  transacción. La clave se aísla por chofer y el cobro tiene `viaje_id` UNIQUE:
+  un viaje no puede cobrarse dos veces. El replay devuelve `200` con
+  `Idempotency-Replayed: true`. Desde `ASIGNADO` responde `409 TRANSICION_INVALIDA`
+  con `"Solo un viaje en curso puede finalizarse."`
 - `GET /viajes/:id/cobro` permite consultar el cobro al pasajero, al chofer
   asignado, a un administrador o a un operador de soporte.
 - `GET /ready` comprueba también las tablas de choferes, viajes, cobros,
@@ -306,17 +324,20 @@ publica solo en `127.0.0.1`. El puerto se puede cambiar con
 `POSTGRES_TEST_PORT`. Si `TEST_DATABASE_URL` está definida, el runner usa esa
 base externa y no levanta ni baja el contenedor.
 
-Los tests de PostgreSQL se saltean automáticamente en `pnpm test` cuando
-`TEST_DATABASE_URL` no está definida. Para ejecutarlos manualmente:
+En `pnpm test` esas 4 suites se omiten; la ejecución verificada usó el runner
+efímero, sin depender de `TEST_DATABASE_URL`:
 
 ```bash
 pnpm test:db:up
-TEST_DATABASE_URL=postgresql://admin:password@127.0.0.1:5433/proy_db_test \
-  pnpm test:integration
+pnpm test:integration:db   # 48 tests PostgreSQL reales: 48 pass, 0 fail, 0 skipped
 pnpm test:db:down
 ```
 
-`test:db:up` deja el esquema migrado y listo para usar.
+También se verificó la HTTP contra PostgreSQL real con
+`pnpm test:db:up` → `pnpm verificar:postgres` → `pnpm test:db:down`
+(16 OK, 0 fail, 2 omitidos). `test:db:up` deja el esquema migrado y listo para
+usar; para apuntar a una base externa con `pnpm test:integration` sí podés
+definir `TEST_DATABASE_URL`.
 
 ## Comandos
 

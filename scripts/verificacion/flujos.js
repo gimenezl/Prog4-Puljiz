@@ -48,6 +48,37 @@ export async function aceptarViaje(contexto, viajeId, chofer = 'chofer1') {
   return respuesta.datos.viaje;
 }
 
+export async function marcarEnCamino(contexto, viajeId, chofer = 'chofer1') {
+  const sesion = usuario(contexto, chofer);
+  const respuesta = await contexto.solicitar(`/viajes/${viajeId}/en-camino`, {
+    metodo: 'POST',
+    token: sesion.token,
+  });
+
+  afirmarEstado(respuesta, 200, `marcar en camino como ${chofer}`);
+  evidencia(contexto, `POST /viajes/${viajeId}/en-camino (${chofer}) -> 200`);
+
+  return respuesta.datos.viaje;
+}
+
+export async function iniciarViaje(contexto, viajeId, chofer = 'chofer1') {
+  const sesion = usuario(contexto, chofer);
+  const respuesta = await contexto.solicitar(`/viajes/${viajeId}/iniciar`, {
+    metodo: 'POST',
+    token: sesion.token,
+  });
+
+  afirmarEstado(respuesta, 200, `iniciar viaje como ${chofer}`);
+  evidencia(contexto, `POST /viajes/${viajeId}/iniciar (${chofer}) -> 200`);
+
+  return respuesta.datos.viaje;
+}
+
+export async function ponerEnCurso(contexto, viajeId, chofer = 'chofer1') {
+  await marcarEnCamino(contexto, viajeId, chofer);
+  return iniciarViaje(contexto, viajeId, chofer);
+}
+
 export async function finalizarViaje(contexto, viajeId, { chofer = 'chofer1', clave } = {}) {
   const sesion = usuario(contexto, chofer);
   const claveFinal = clave ?? claveDePrueba(contexto, `final-${viajeId}`);
@@ -66,16 +97,17 @@ export async function finalizarViaje(contexto, viajeId, { chofer = 'chofer1', cl
 export async function cancelarViaje(
   contexto,
   viajeId,
-  { pasajero = 'pasajero', motivo = 'Cancelado por la prueba automática' } = {},
+  { pasajero = 'pasajero', actor, motivo = 'Cancelado por la prueba automática' } = {},
 ) {
-  const sesion = usuario(contexto, pasajero);
+  const responsable = actor ?? pasajero;
+  const sesion = usuario(contexto, responsable);
   const respuesta = await contexto.solicitar(`/viajes/${viajeId}/cancelar`, {
     metodo: 'POST',
     token: sesion.token,
     cuerpo: { motivo },
   });
 
-  afirmarEstado(respuesta, 200, `cancelar viaje como ${pasajero}`);
+  afirmarEstado(respuesta, 200, `cancelar viaje como ${responsable}`);
   evidencia(contexto, `POST /viajes/${viajeId}/cancelar -> 200 ${respuesta.datos.viaje.estado}`);
 
   return respuesta.datos.viaje;

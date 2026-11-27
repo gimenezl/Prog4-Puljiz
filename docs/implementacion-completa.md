@@ -1,5 +1,11 @@
 # Implementación completa del backend — Bloques 1 a 6
 
+> **Nota de snapshot (11/11/2026):** refleja el estado previo a RF-09/RF-10. La
+> cancelación ya no es solo del pasajero: es actor-aware, `finalizar` exige
+> `EN_CURSO` y los tests de aceptación concurrente son 50, no 20. Estado vigente
+> y resultados reales: `docs/rf09-rf07-rf22-rf08-rf10-requerimientos-y-cambios.md`
+> (§3.4 y §9).
+
 Este documento consolida todo lo implementado en el backend de la plataforma de
 viajes hasta el **11 de noviembre de 2026**, en la rama
 `preparacion-de-entorno`.
@@ -170,7 +176,9 @@ También se validan:
 - Un administrador puede leer cuentas ajenas, pero no editarlas.
 - Un viaje solo lo pueden ver el pasajero, el chofer asignado, un administrador
   o un operador de soporte.
-- Solo el pasajero dueño puede cancelar.
+- ~~Solo el pasajero dueño puede cancelar.~~ Snapshot superado: hoy cancela el
+  pasajero dueño (`SOLICITADO`/`ASIGNADO`/`CHOFER_EN_CAMINO`) o el chofer
+  asignado (`ASIGNADO`/`CHOFER_EN_CAMINO`), sin soporte (D8).
 - Solo el propio chofer puede cambiar su disponibilidad.
 - Solo un administrador puede habilitar o inhabilitar choferes.
 
@@ -577,7 +585,8 @@ Casos:
   duplicado.
 - Bloqueo real con `SELECT ... FOR UPDATE`.
 - Rollback real de la unidad de trabajo.
-- 20 aceptaciones concurrentes: exactamente un ganador.
+- ~~20 aceptaciones concurrentes~~: el test vigente usa 50 y pasó contra
+  PostgreSQL real (48/48 en la suite de base de datos).
 - Un chofer aceptando dos viajes: uno recibe `CHOFER_OCUPADO`.
 - Idempotencia concurrente, conflicto de contenido y vencimiento.
 - Aceptación y cancelación simultáneas.

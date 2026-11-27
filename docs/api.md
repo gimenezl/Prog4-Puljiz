@@ -2,7 +2,7 @@
 
 > **Grupo 7 · Programación IV (UTN)** · Tarjeta «E0 · Contrato de API y permisos»
 >
-> **Estado:** este contrato ya incluye la configuración administrativa y el flujo de cotización implementados en la rama E2 (§5.2 y §5.3). Los endpoints **existentes** están documentados tal como funcionan hoy y sus ejemplos son respuestas reales de la aplicación levantada con Docker (`docker compose up --build` y `pnpm db:seed`). Los endpoints **propuestos** todavía no existen: están marcados «Propuesto — tarjeta X» y son el acuerdo previo para programarlos.
+> **Estado:** este contrato incluye la configuración administrativa y el flujo de cotización de la rama E2 (§5.2 y §5.3), y las transiciones de viaje de RF-09/RF-10 (§4.4 y §5.6). Los endpoints **existentes** están documentados tal como funcionan hoy; los **propuestos** todavía no existen y están marcados «Propuesto — tarjeta X». En particular, las ofertas con vencimiento (RF-07, §5.5) y el cierre por falta de candidatos (RF-22) siguen pendientes por decisión D4.
 >
 > **Alcance:** variante de **precio dinámico**. No hay flotas, cupos ni administradores de flota.
 
@@ -83,7 +83,7 @@ Esta tabla coincide exactamente con `ESTADOS_HTTP_POR_CODIGO` en `src/infrastruc
 | `NO_AUTORIZADO` | 403 | El rol no está permitido en la ruta (verificación por rol) o el recurso no pertenece al solicitante (verificación por recurso). Ver §6.1. |
 | `NO_ENCONTRADO` | 404 | El recurso pedido por identificador no existe (usuario, viaje o perfil de chofer). |
 | `EMAIL_YA_REGISTRADO` | 409 | Registro con un email que ya tiene cuenta (sin distinguir mayúsculas). |
-| `TRANSICION_INVALIDA` | 409 | El estado actual del viaje no admite la operación (por ejemplo, cancelar un viaje ya cancelado o finalizar uno que no está `ASIGNADO`), o el viaje ya tiene un cobro registrado. |
+| `TRANSICION_INVALIDA` | 409 | El estado actual del viaje no admite la operación (por ejemplo, cancelar un viaje ya cancelado o finalizar uno que no está `EN_CURSO`), o el viaje ya tiene un cobro registrado. La excepción deliberada es `asignar()` sobre un estado terminal, que responde `VIAJE_NO_DISPONIBLE` (ADR-0004). |
 | `VIAJE_NO_DISPONIBLE` | 409 | Se intenta aceptar un viaje que ya no está `SOLICITADO` (lo tomó otro chofer o se canceló). |
 | `OFERTA_NO_PENDIENTE` | 409 | *(previsto, E3)* La oferta ya fue aceptada, rechazada o anulada. |
 | `CHOFER_NO_ELEGIBLE` | 409 | El chofer no tiene perfil, no está habilitado, no está disponible o no tiene una ubicación reciente (al listar o aceptar viajes); también al declararse disponible o informar ubicación sin estar habilitado. |
@@ -150,7 +150,8 @@ Todavía **no** están en `error-mapping.js`. La tarjeta que los use debe agrega
 |---|---|---|
 | `POST /cotizaciones/{id}/confirmar` | Sí. Alcance `cotizacion:confirmar:<pasajeroId>`, huella de `cotizacionId` + `pasajeroId`. | Implementado — tarjeta E2 · RF-17 + RF-18 + RF-19 |
 | Cobro simulado | Ya existe: se ejecuta dentro de `POST /viajes/{id}/finalizar`, protegido por su clave y por `viaje_id` único en `cobros_simulados` (§4.4). | Implementado |
-| Aceptar o rechazar oferta, cancelar, avanzar el viaje | No. Son idempotentes por su clave natural: repetirlas no duplica efectos, la segunda recibe `OFERTA_NO_PENDIENTE` o `TRANSICION_INVALIDA` (`docs/modelo.md` Q8). | Propuesto |
+| Cancelar, `en-camino`, `iniciar` y finalizar sin clave | No. Repetirlas no duplica efectos: la segunda recibe `TRANSICION_INVALIDA` (o el replay de la clave en `finalizar`). | Implementado para las transiciones (§4.4) |
+| Aceptar o rechazar oferta | No. Serán idempotentes por su clave natural (`OFERTA_NO_PENDIENTE`). | Propuesto — tarjeta E3, pendiente por D4 |
 | Cotizar | No. Cada cotización es una foto nueva y no tiene efectos sobre otros recursos. | Implementado |
 
 Confirmar no recibe importes del cliente: la huella protege la identidad de la cotización y el pasajero, y la respuesta guardada contiene el viaje con el precio ya fijado. En todas las operaciones con clave se mantienen las mismas reglas de §3.1 (alcance por usuario, huella, misma transacción, `Idempotency-Replayed`).
@@ -514,8 +515,8 @@ Forma del viaje en todas las respuestas:
 | `precioFijadoCentavos` | Precio fijado al crear el viaje. Al confirmar una cotización se **copia** de ella; `POST /viajes` sigue usando la tarifa provisional por distancia (§8, D1). |
 | `cotizacionId`, `multiplicadorFijado` | Cotización de origen y multiplicador copiado al confirmar (ADR-0005). Son `null` y `"1.0000"` en los viajes creados con `POST /viajes`. |
 | `choferId` | Chofer asignado o `null`. Se conserva como historial si el viaje se cancela. |
-| `estado` | Hoy solo `SOLICITADO`, `ASIGNADO`, `FINALIZADO` o `CANCELADO_POR_PASAJERO` son alcanzables por la API. |
-| `solicitadoEn`, `asignadoEn`, `cerradoEn` | Instantes de cada etapa. |
+| `estado` | Alcanzables por la API: `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO`, `EN_CURSO`, `FINALIZADO`, `CANCELADO_POR_PASAJERO` y `CANCELADO_POR_CHOFER`. `CANCELADO_POR_SOPORTE` y `SIN_CHOFERES_DISPONIBLES` siguen sin productor (D8 y RF-22). |
+| `solicitadoEn`, `asignadoEn`, `iniciadoEn`, `cerradoEn` | Instantes de cada etapa. `iniciadoEn` se fija al `iniciar` y se conserva en `FINALIZADO`; es `null` en los estados previos. |
 | `canceladoPorId`, `motivoCancelacion` | Autor y motivo de la cancelación. |
 
 #### `POST /viajes`
@@ -549,6 +550,7 @@ Forma del viaje en todas las respuestas:
     "estado": "SOLICITADO",
     "solicitadoEn": "2026-11-12T00:18:36.675Z",
     "asignadoEn": null,
+    "iniciadoEn": null,
     "cerradoEn": null,
     "canceladoPorId": null,
     "motivoCancelacion": null
@@ -593,6 +595,7 @@ Con la tarifa por defecto: `100000 + round(4,777 km × 50000) = 338850`, acotado
       "estado": "SOLICITADO",
       "solicitadoEn": "2026-11-23T15:59:04.411Z",
       "asignadoEn": null,
+      "iniciadoEn": null,
       "cerradoEn": null,
       "canceladoPorId": null,
       "motivoCancelacion": null,
@@ -647,6 +650,7 @@ Si no hay viajes dentro del radio, responde `{ "viajes": [] }`.
     "estado": "ASIGNADO",
     "solicitadoEn": "2026-11-12T00:18:36.675Z",
     "asignadoEn": "2026-11-12T00:18:36.937Z",
+    "iniciadoEn": null,
     "cerradoEn": null,
     "canceladoPorId": null,
     "motivoCancelacion": null
@@ -666,17 +670,74 @@ Después, `GET /choferes/yo` devuelve `"viajeActivoId": "5d2e8f14-…"` y `"esta
 | 409 | `CHOFER_OCUPADO` | `"El chofer ya tiene un viaje activo."` |
 | 409 | `CHOFER_NO_ELEGIBLE` | Sin perfil, inhabilitado, no disponible o sin ubicación reciente. Se revalida dentro de la transacción. |
 
+#### `POST /viajes/{id}/en-camino`
+
+- **Roles:** `CHOFER`. Por recurso: solo el **chofer asignado**.
+- **Descripción:** transición `ASIGNADO → CHOFER_EN_CAMINO`. Bloquea la fila del
+  viaje y valida el estado de origen en el dominio antes de actualizar; no usa
+  `UPDATE ... WHERE estado = origen`.
+- **Cuerpo:** ninguno.
+- **Éxito:** `200 OK` con `{ "viaje": { … } }`; `iniciadoEn` sigue en `null`.
+- **Errores:**
+
+| HTTP | Código | Ejemplo de causa |
+|---:|---|---|
+| 400 | `DATOS_INVALIDOS` | `id` no es UUID. |
+| 403 | `NO_AUTORIZADO` | Otro rol o chofer no asignado → `"Solo el chofer asignado puede marcar este viaje en camino."` |
+| 404 | `NO_ENCONTRADO` | `"El viaje no existe."` |
+| 409 | `TRANSICION_INVALIDA` | Origen distinto de `ASIGNADO` → `"Solo un viaje asignado puede marcarse en camino."` |
+
+#### `POST /viajes/{id}/iniciar`
+
+- **Roles:** `CHOFER`. Por recurso: solo el **chofer asignado**.
+- **Descripción:** transición `CHOFER_EN_CAMINO → EN_CURSO`; fija `iniciadoEn`
+  con el reloj del servidor. Serializa por la fila del viaje y valida en el
+  dominio antes de actualizar.
+- **Cuerpo:** ninguno.
+- **Éxito:** `200 OK` con `{ "viaje": { … } }`, por ejemplo:
+
+```json
+{
+  "viaje": {
+    "id": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
+    "choferId": "7c9e4b21-2d3f-4a8b-b6c5-1e0f9d8a2b02",
+    "estado": "EN_CURSO",
+    "asignadoEn": "2026-11-12T00:18:36.937Z",
+    "iniciadoEn": "2026-11-12T00:20:10.120Z",
+    "cerradoEn": null
+  }
+}
+```
+
+- **Errores:**
+
+| HTTP | Código | Ejemplo de causa |
+|---:|---|---|
+| 400 | `DATOS_INVALIDOS` | `id` no es UUID. |
+| 403 | `NO_AUTORIZADO` | Otro rol o chofer no asignado → `"Solo el chofer asignado puede iniciar este viaje."` |
+| 404 | `NO_ENCONTRADO` | `"El viaje no existe."` |
+| 409 | `TRANSICION_INVALIDA` | Origen distinto de `CHOFER_EN_CAMINO` → `"Solo un viaje con el chofer en camino puede iniciarse."` |
+
 #### `POST /viajes/{id}/cancelar`
 
-- **Roles:** `PASAJERO`. Por recurso: solo el **pasajero del viaje**.
-- **Descripción:** cancela un viaje `SOLICITADO` o `ASIGNADO`. Si tenía chofer, lo libera en la misma transacción.
+- **Roles:** `PASAJERO` o `CHOFER`. Por recurso: solo el **pasajero dueño** o el
+  **chofer asignado**. La decisión la toma el vínculo con el viaje, no el rol:
+  no hay ruta separada ni cancelación por soporte (D8).
+- **Descripción:** el pasajero cancela desde `SOLICITADO`, `ASIGNADO` o
+  `CHOFER_EN_CAMINO` y deja `CANCELADO_POR_PASAJERO`; el chofer asignado cancela
+  desde `ASIGNADO` o `CHOFER_EN_CAMINO` y deja `CANCELADO_POR_CHOFER`. Si había
+  chofer, lo libera en la misma transacción y conserva `choferId` como historial.
 - **Cuerpo:**
 
 ```json
 { "motivo": "Cambié de planes" }
 ```
 
-`motivo`: obligatorio, 1 a 500 caracteres.
+`motivo`: obligatorio, no vacío y de hasta 500 caracteres. Se valida en HTTP
+(Zod) y en el dominio (`DATOS_INVALIDOS`); en la base la columna es
+`VARCHAR(500)` con check de no nulo para los estados cancelados, pero **sin
+check de no vacío**. Superar 500 caracteres lo rechazan el dominio y la base
+(`22001`).
 
 - **Éxito:** `200 OK`
 
@@ -706,17 +767,23 @@ Después, `GET /choferes/yo` devuelve `"viajeActivoId": "5d2e8f14-…"` y `"esta
 
 | HTTP | Código | Ejemplo de causa |
 |---:|---|---|
-| 400 | `DATOS_INVALIDOS` | Sin `motivo` → `"Datos inválidos: motivo: Invalid input: expected string, received undefined"` (mensaje por defecto de Zod, §8, D20). |
-| 403 | `NO_AUTORIZADO` | Un chofer → `"No tenés permiso para realizar esta operación."` (por rol). |
-| 403 | `NO_AUTORIZADO` | Otro pasajero → `"No tenés permiso para cancelar este viaje."` (por recurso). |
+| 400 | `DATOS_INVALIDOS` | Sin `motivo` → `"Datos inválidos: motivo: Invalid input: expected string, received undefined"` (mensaje por defecto de Zod, §8, D20); vacío o >500 caracteres. |
+| 403 | `NO_AUTORIZADO` | Administrador u operador de soporte → `"No tenés permiso para realizar esta operación."` (por rol; D8). |
+| 403 | `NO_AUTORIZADO` | Otro pasajero u otro chofer → `"No tenés permiso para cancelar este viaje."` (por recurso). Un chofer sobre un viaje `SOLICITADO` también recibe `403`, porque no tiene vínculo como asignado. |
 | 404 | `NO_ENCONTRADO` | `"El viaje no existe."` |
-| 409 | `TRANSICION_INVALIDA` | Ya cancelado → `"El viaje ya no puede cancelarse en su estado actual."` |
+| 409 | `TRANSICION_INVALIDA` | Ya cancelado → `"El viaje ya no puede cancelarse en su estado actual."`; chofer en `EN_CURSO` → `"El viaje ya no puede cancelarse por el chofer en su estado actual."`; pasajero en `EN_CURSO` → la misma regla del pasajero. |
 
 #### `POST /viajes/{id}/finalizar`
 
 - **Roles:** `CHOFER`. Por recurso: solo el **chofer asignado**.
 - **Cabeceras:** `Idempotency-Key` obligatoria (§3).
-- **Descripción:** finaliza un viaje `ASIGNADO`, libera al chofer y registra y ejecuta el cobro simulado, todo en una sola transacción. El monto es `precioFijadoCentavos`; el cliente no envía importes. El simulador genera una referencia determinista `SIM-<viajeId>`.
+- **Descripción:** finaliza un viaje **`EN_CURSO`** (`EN_CURSO → FINALIZADO`),
+  libera al chofer y registra y ejecuta el cobro simulado, todo en una sola
+  transacción. Desde `ASIGNADO` o `CHOFER_EN_CAMINO` se rechaza con
+  `409 TRANSICION_INVALIDA`; ya no se acepta el origen `ASIGNADO` legacy. El
+  monto es `precioFijadoCentavos` mientras E4 no defina la tarifa final (D7); el
+  cliente no envía importes. El simulador genera una referencia determinista
+  `SIM-<viajeId>`.
 - **Cuerpo:** ninguno.
 - **Éxito:** `200 OK`
 
@@ -735,6 +802,7 @@ Después, `GET /choferes/yo` devuelve `"viajeActivoId": "5d2e8f14-…"` y `"esta
     "estado": "FINALIZADO",
     "solicitadoEn": "2026-11-18T22:40:14.779Z",
     "asignadoEn": "2026-11-18T22:40:14.826Z",
+    "iniciadoEn": "2026-11-18T22:40:14.860Z",
     "cerradoEn": "2026-11-18T22:40:14.885Z",
     "canceladoPorId": null,
     "motivoCancelacion": null
@@ -760,9 +828,9 @@ Después, `GET /choferes/yo` del chofer devuelve `"viajeActivoId": null`.
 |---:|---|---|
 | 400 | `CLAVE_DE_IDEMPOTENCIA_REQUERIDA` | `"La cabecera Idempotency-Key es obligatoria para finalizar un viaje y cobrar."` |
 | 403 | `NO_AUTORIZADO` | Un pasajero → `"No tenés permiso para realizar esta operación."` (por rol). |
-| 403 | `NO_AUTORIZADO` | Otro chofer, o un viaje todavía `SOLICITADO` → `"Solo el chofer asignado puede finalizar este viaje."` (por recurso). |
+| 403 | `NO_AUTORIZADO` | Otro chofer, o un viaje todavía `SOLICITADO` → `"Solo el chofer asignado puede finalizar este viaje."` (por recurso; D27 sigue abierta: se valida chofer antes que estado, por eso es 403 y no 409). |
 | 404 | `NO_ENCONTRADO` | `"El viaje no existe."` |
-| 409 | `TRANSICION_INVALIDA` | Ya finalizado (con otra clave) → `"Solo un viaje asignado puede finalizarse."` |
+| 409 | `TRANSICION_INVALIDA` | Origen no `EN_CURSO` (por ejemplo `ASIGNADO`, `CHOFER_EN_CAMINO` o ya finalizado con otra clave) → `"Solo un viaje en curso puede finalizarse."` |
 | 409 | `CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO` | La clave se usó para finalizar otro viaje. |
 
 #### `GET /viajes/{id}/cobro`
@@ -840,7 +908,12 @@ Cualquier método o ruta no declarados responde:
 
 ## 5. Endpoints propuestos
 
-Los bloques §5.2 y §5.3 ya están **implementados** en la rama E2; el resto sigue propuesto. Cada tarjeta puede ajustar nombres o campos, pero cualquier cambio se refleja aquí en el mismo PR. Valen las convenciones de §1: esquemas estrictos, sin importes del cliente, montos en centavos, multiplicador como texto, fechas en UTC.
+Los bloques §5.2 y §5.3 ya están **implementados** en la rama E2 y §5.6 quedó
+**implementado** con RF-09/RF-10; el resto sigue propuesto (RF-07, RF-22, E4 y
+E5). Cada tarjeta puede ajustar nombres o campos, pero cualquier cambio se
+refleja aquí en el mismo PR. Valen las convenciones de §1: esquemas estrictos,
+sin importes del cliente, montos en centavos, multiplicador como texto, fechas en
+UTC.
 
 ### 5.1 Cuentas del personal
 
@@ -1137,47 +1210,62 @@ El resumen `viaje` no incluye datos personales del pasajero.
 
 ### 5.6 Transiciones del viaje
 
-Todas las transiciones tienen **cuerpo vacío** (salvo la cancelación, que exige `motivo`), devuelven `200 OK` con `{ "viaje": { … } }` y rechazan con `409 TRANSICION_INVALIDA` si el estado actual no la admite (`docs/modelo.md` §6.1).
+Las transiciones de esta sección **ya están implementadas** (§4.4); la tabla se
+consolida aquí para facilitar la trazabilidad con `docs/modelo.md` §6.1. Todas
+tienen **cuerpo vacío** (salvo la cancelación, que exige `motivo`), devuelven
+`200 OK` con `{ "viaje": { … } }` y rechazan con `409 TRANSICION_INVALIDA` si el
+estado de origen no es el exigido.
 
-| Endpoint | Roles | Estado origen → destino | Tarjeta |
+| Endpoint | Roles | Estado origen → destino | Estado |
 |---|---|---|---|
-| `POST /viajes/{id}/en-camino` | `CHOFER` asignado | `ASIGNADO` → `CHOFER_EN_CAMINO` | **Propuesto — tarjeta E3 · ofertas y asignación** |
-| `POST /viajes/{id}/iniciar` | `CHOFER` asignado | `CHOFER_EN_CAMINO` → `EN_CURSO` (fija `iniciadoEn`) | **Propuesto — tarjeta E3 · ofertas y asignación** |
-| `POST /viajes/{id}/finalizar` (ajuste) | `CHOFER` asignado | `EN_CURSO` → `FINALIZADO` (hoy existe desde `ASIGNADO`, §4.4) | **Propuesto — tarjeta E4 · tarifa y cobro** |
-| `POST /viajes/{id}/cancelar` (ampliado) | `PASAJERO` dueño, `CHOFER` asignado, `OPERADOR_SOPORTE` | Según el actor, ver abajo. | **Propuesto — tarjetas E3 (chofer) y E5 (soporte)** |
+| `POST /viajes/{id}/en-camino` | `CHOFER` asignado | `ASIGNADO` → `CHOFER_EN_CAMINO` | Implementado |
+| `POST /viajes/{id}/iniciar` | `CHOFER` asignado | `CHOFER_EN_CAMINO` → `EN_CURSO` (fija `iniciadoEn`) | Implementado |
+| `POST /viajes/{id}/finalizar` | `CHOFER` asignado | `EN_CURSO` → `FINALIZADO` (con `Idempotency-Key`) | Implementado; cobro con `precioFijadoCentavos` (D7) |
+| `POST /viajes/{id}/cancelar` | `PASAJERO` dueño o `CHOFER` asignado | Según actor y estado, ver abajo | Implementado; sin soporte (D8) |
 
-**Ajuste propuesto de `POST /viajes/{id}/finalizar`.** El endpoint ya existe (§4.4): hoy finaliza desde `ASIGNADO` y cobra `precioFijadoCentavos`. Cuando existan `EN_CURSO` y el recorrido, se propone que finalice desde `EN_CURSO` y que el servidor calcule `distanciaRealM` con los puntos `EN_CURSO`, `tiempoRealS` y `tarifaFinalCentavos` (`docs/modelo.md` §7.3, opción A: nunca supera `precioFijadoCentavos`), y que el cobro use ese monto. Sigue sin recibir distancia, tiempo ni importes, y mantiene la clave de idempotencia.
+El serialize se logra con `SELECT ... FOR UPDATE` sobre la fila del viaje y
+validación de dominio antes del `UPDATE`, no con `UPDATE ... WHERE estado =
+origen`. Desde un estado terminal, `asignar()` devuelve
+`VIAJE_NO_DISPONIBLE`, no `TRANSICION_INVALIDA`: es la excepción deliberada de
+ADR-0004 para la carrera aceptación-vs-cancelación.
 
-```json
-{
-  "viaje": {
-    "id": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
-    "estado": "FINALIZADO",
-    "precioFijadoCentavos": 458563,
-    "multiplicadorFijado": "1.25",
-    "iniciadoEn": "2026-11-20T18:40:00.000Z",
-    "cerradoEn": "2026-11-20T18:54:00.000Z",
-    "distanciaRealM": 4650,
-    "tiempoRealS": 840,
-    "tarifaFinalCentavos": 452000
-  },
-  "cobro": {
-    "id": "b8c9d0e1-f2a3-4b4c-9d5e-6f7a8b9c0d50",
-    "montoCentavos": 452000,
-    "estado": "COBRADO"
-  }
-}
-```
+**Carreras con cancelación (estado actual):**
 
-**Cancelación ampliada.** Mantiene la ruta y el cuerpo `{ "motivo" }` actuales; el estado final lo decide el caso de uso según quién cancela:
+- `marcarEnCamino` contra cancelación del pasajero **no** es «un solo ganador»:
+  por D3 el pasajero puede cancelar desde `CHOFER_EN_CAMINO`. Si el chofer marca
+  en camino primero, la cancelación posterior también puede completarse. El
+  invariante es de **coherencia**: el estado final es `CHOFER_EN_CAMINO` con el
+  chofer ocupado, o `CANCELADO_POR_PASAJERO` con el chofer libre; nunca un viaje
+  cancelado con chofer ocupado.
+- `finalizar` contra cancelación del chofer: por R10-04 el chofer **no** puede
+  cancelar desde `EN_CURSO`, así que `finalizar` gana siempre; la rama «gana la
+  cancelación» no es alcanzable hoy. No hay doble cobro y el chofer queda libre.
+- `iniciar` o `finalizar` contra cancelación del pasajero: solo se admite la
+  cancelación desde `CHOFER_EN_CAMINO`, por lo que `finalizar` no compite con
+  ella en un origen válido; `iniciar` se serializa por la fila del viaje.
+
+**Tarifa final (pendiente E4).** Hoy `finalizar` cobra `precioFijadoCentavos`.
+Cuando existan el recorrido y los puntos `EN_CURSO`, E4 evaluará calcular
+`distanciaRealM`, `tiempoRealS` y `tarifaFinalCentavos` (`docs/modelo.md` §7.3,
+opción A: nunca supera `precioFijadoCentavos`). Esos campos **no están** en la
+respuesta actual; `iniciadoEn` y `cerradoEn` sí. El cliente no envía distancia,
+tiempo ni importes.
+
+**Cancelación actor-aware.** Mantiene la ruta y el cuerpo `{ "motivo" }`
+actuales; el caso de uso decide según el vínculo con el viaje, no según el rol:
 
 | Actor | Estados en los que puede cancelar | Estado final |
 |---|---|---|
 | `PASAJERO` dueño | `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO` | `CANCELADO_POR_PASAJERO` |
 | `CHOFER` asignado | `ASIGNADO`, `CHOFER_EN_CAMINO` | `CANCELADO_POR_CHOFER` |
-| `OPERADOR_SOPORTE` | `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO`, `EN_CURSO` | `CANCELADO_POR_SOPORTE` (Q10) |
+| `OPERADOR_SOPORTE` | — | **Pendiente (Q10 / D8): no implementado**, recibe `403` por rol |
 
-En todos los casos las ofertas pendientes pasan a `ANULADA` y el chofer se libera en la misma transacción. Errores: `400 DATOS_INVALIDOS`, `403 NO_AUTORIZADO`, `404 NO_ENCONTRADO`, `409 TRANSICION_INVALIDA`.
+En los dos casos implementados el chofer se libera en la misma transacción y se
+conserva `choferId` como historial. `motivo` se valida en HTTP y dominio; la
+base exige no nulo en cancelados y `VARCHAR(500)`, pero no valida el vacío.
+Cuando RF-07 se implemente, las ofertas pendientes pasarán a `ANULADA`; hoy no
+hay tabla de ofertas. Errores: `400 DATOS_INVALIDOS`, `403 NO_AUTORIZADO`,
+`404 NO_ENCONTRADO`, `409 TRANSICION_INVALIDA`.
 
 ### 5.7 Ubicación del viaje y tiempo real
 
@@ -1233,7 +1321,9 @@ Todas: **Propuesto — tarjeta E5 · historial y soporte**.
 - **Parámetros de consulta:** `limite`, `cursor`.
 - **Éxito:** `200 OK` con `{ "viajes": [ … ], "siguienteCursor": … }`.
 
-La cancelación por soporte usa `POST /viajes/{id}/cancelar` ampliado (§5.6).
+La cancelación por soporte **no está implementada**: la ruta actual
+`POST /viajes/{id}/cancelar` es actor-aware y admite solo pasajero dueño o chofer
+asignado (§5.6, D8).
 
 ### 5.10 Integración con Python
 
@@ -1312,7 +1402,8 @@ Los endpoints propios de Python (`POST /reportes/zonas/{zonaId}/actualizar` y `G
 | `GET /viajes/disponibles` | ✗ | ✓ (elegible) | ✗ | ✗ | ✗ |
 | `GET /viajes/{id}` | propio | propio (asignado) | ✓ | ✓ | ✗ |
 | `POST /viajes/{id}/aceptar` | ✗ | ✓ (elegible) | ✗ | ✗ | ✗ |
-| `POST /viajes/{id}/cancelar` (hoy) | propio | ✗ | ✗ | ✗ | ✗ |
+| `POST /viajes/{id}/en-camino`, `…/iniciar` | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
+| `POST /viajes/{id}/cancelar` | propio (dueño) | propio (asignado) | ✗ | ✗ | ✗ |
 | `POST /viajes/{id}/finalizar` | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
 | `GET /viajes/{id}/cobro` | propio | propio (asignado) | ✓ | ✓ | ✗ |
 | *`POST /usuarios`* | ✗ | ✗ | ✗ | ✓ | ✗ |
@@ -1327,8 +1418,7 @@ Los endpoints propios de Python (`POST /reportes/zonas/{zonaId}/actualizar` y `G
 | `PUT /choferes/yo/ubicacion` | ✗ | propio (habilitado) | ✗ | ✗ | ✗ |
 | *`GET /ofertas`* | ✗ | propio | ✗ | ✗ | ✗ |
 | *`POST /ofertas/{id}/aceptar`, `…/rechazar`* | ✗ | propio (destinatario) | ✗ | ✗ | ✗ |
-| *`POST /viajes/{id}/en-camino`, `…/iniciar`* | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
-| *`POST /viajes/{id}/cancelar` (ampliado)* | propio | propio (asignado) | ✓ | ✗ | ✗ |
+| *`POST /viajes/{id}/cancelar` (soporte, pendiente D8)* | ✗ | ✗ | ✓ | ✗ | ✗ |
 | *`GET /viajes/{id}/ubicacion`, `…/recorrido`* | propio (activo) | propio (asignado, activo) | ✗ | ✗ | ✗ |
 | *Canal de tiempo real* | propio | propio | ✗ | ✗ | ✗ |
 | *`GET /viajes` (historial)* | propio | propio | ✗ | ✓ | ✗ |
@@ -1347,7 +1437,7 @@ Notas sobre la tabla:
 
 Los permisos se controlan en **dos niveles**, como fija ADR-0003:
 
-1. **Por rol, en la capa HTTP.** El middleware `crearAutorizacionPorRol(...)` se monta en la ruta, después de la autenticación, y rechaza con **`403 NO_AUTORIZADO`** y el mensaje genérico `"No tenés permiso para realizar esta operación."` a quien no tiene un rol permitido. No consulta la base: el rol viaja firmado en el JWT. Responde antes de validar el cuerpo y antes de buscar el recurso. Ejemplo: un chofer que llama a `POST /viajes/{id}/cancelar`.
+1. **Por rol, en la capa HTTP.** El middleware `crearAutorizacionPorRol(...)` se monta en la ruta, después de la autenticación, y rechaza con **`403 NO_AUTORIZADO`** y el mensaje genérico `"No tenés permiso para realizar esta operación."` a quien no tiene un rol permitido. No consulta la base: el rol viaja firmado en el JWT. Responde antes de validar el cuerpo y antes de buscar el recurso. Ejemplo: un operador de soporte que llama a `POST /viajes/{id}/cancelar` (D8), o un pasajero que llama a `POST /viajes/{id}/iniciar`.
 2. **Por recurso, en el caso de uso** (`src/application/use-cases/`). El caso de uso recibe al solicitante (`usuarioId` y `rol`) y comprueba que el recurso le pertenezca o que su rol pueda verlo. También responde **`403 NO_AUTORIZADO`**, pero con un mensaje específico (por ejemplo, `"No tenés permiso para cancelar este viaje."`). Ejemplo: otro pasajero que intenta cancelar un viaje ajeno.
 
 La regla por recurso vive en la aplicación y no en Express para que valga igual desde HTTP, desde el canal de tiempo real o desde un test. Las rutas sin control por rol (`/usuarios/{id}`, `GET /viajes/{id}`) delegan **todo** el permiso al caso de uso. Cada endpoint nuevo declara sus roles en la ruta y, si toca un recurso con dueño, verifica la propiedad en su caso de uso.
@@ -1365,7 +1455,7 @@ Hoy los casos de uso buscan el recurso **antes** de verificar el permiso: un ide
 | **Global** | Todas las rutas, incluidas `/health` y `/ready`, por IP. | 300 solicitudes por minuto. | `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de solicitudes. Intente más tarde."`). |
 | **Login** | `POST /auth/login`, por IP. Solo cuentan los intentos **fallidos** (respuesta 4xx o 5xx). | 5 fallos cada 15 minutos. | `LOGIN_RATE_LIMIT_MAX`, `LOGIN_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Demasiados intentos de inicio de sesión. Intentá más tarde."`). |
 | **Registro** | `POST /auth/registro`, por IP. | 10 solicitudes por minuto. | `REGISTRO_RATE_LIMIT_MAX`, `REGISTRO_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de registros. Intente más tarde."`). |
-| **Viajes** | `POST /viajes`, `/aceptar`, `/finalizar`, `/cancelar`, `POST /cotizaciones`, `POST /cotizaciones/{id}/confirmar` y las escrituras de `/admin/configuracion`, por IP, con un contador **compartido** entre todas esas rutas. | 30 solicitudes por minuto. | `VIAJES_RATE_LIMIT_MAX`, `VIAJES_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de operaciones sobre viajes. Intente más tarde."`). |
+| **Viajes** | `POST /viajes`, `/aceptar`, `/en-camino`, `/iniciar`, `/finalizar`, `/cancelar`, `POST /cotizaciones`, `POST /cotizaciones/{id}/confirmar` y las escrituras de `/admin/configuracion`, por IP, con un contador **compartido** entre todas esas rutas. | 30 solicitudes por minuto. | `VIAJES_RATE_LIMIT_MAX`, `VIAJES_RATE_LIMIT_WINDOW_MS` | `429 DEMASIADAS_SOLICITUDES` (`"Se superó el límite de operaciones sobre viajes. Intente más tarde."`). |
 
 - Todos devuelven las cabeceras `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` y `RateLimit-Policy` (borrador 6 del IETF), por ejemplo `RateLimit-Limit: 30`, `RateLimit-Remaining: 29`, `RateLimit-Reset: 60`, `RateLimit-Policy: 30;w=60`, y `Retry-After` en el 429. En las rutas con un límite propio, las cabeceras muestran ese límite y no el global.
 - Los límites de registro y de viajes se suman al global: una solicitud cuenta para los dos.
@@ -1400,7 +1490,7 @@ Los límites por usuario usan el `usuarioId` del token como clave, no la IP. Si 
 
 ## 8. Diferencias con el modelo
 
-Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o de los ADR, o una inconsistencia encontrada al probar la API. **Esta tarjeta no cambia código**: cada punto queda para la tarjeta indicada, que decide si se corrige el código o el documento.
+Cada fila es algo que el código hace distinto de `docs/modelo.md` o de los ADR, o una inconsistencia encontrada al probar la API. Las filas marcadas como resueltas reflejan el estado vigente; las demás quedan para la tarjeta indicada, que decide si se corrige el código o el documento.
 
 | # | Diferencia | Modelo o ADR | Código hoy | Tarjeta que la resuelve |
 |---|---|---|---|---|
@@ -1408,9 +1498,9 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 | D2 | No hay ofertas. | El viaje se **ofrece** a choferes elegibles y se acepta una oferta con vencimiento (§4.11, §6.2). | Cualquier chofer elegible ve los viajes `SOLICITADO` cercanos en `GET /viajes/disponibles` y acepta el viaje directamente. | E3 · ofertas y asignación |
 | D3 | ~~La elegibilidad no mira la ubicación.~~ **Resuelta.** | Chofer elegible = habilitado, disponible, libre **y con ubicación vigente reciente** (§2, I5). | Listar y aceptar viajes exigen una ubicación de menos de `UBICACION_VIGENCIA_MS` (60 s por defecto). | Resuelta en E2 · RF-02 + RF-03 |
 | D4 | ~~Habilitar no exige vehículo.~~ **Resuelta.** | Habilitar exige un vehículo registrado (§6.4, Q11, propuesta). | Habilitar sin vehículo responde `409 CHOFER_SIN_VEHICULO`; el vehículo no se puede borrar. | Resuelta en E2 · RF-02 + RF-03 |
-| D5 | Faltan estados del viaje. | `CHOFER_EN_CAMINO`, `EN_CURSO`, `FINALIZADO`, `CANCELADO_POR_CHOFER`, `CANCELADO_POR_SOPORTE` y `SIN_CHOFERES_DISPONIBLES` con sus transiciones (§6.1). | La entidad `Viaje` del dominio no tiene `CHOFER_EN_CAMINO` ni `EN_CURSO` (la migración `002_viajes.sql` sí los admite), y solo hay transiciones `SOLICITADO → ASIGNADO` y cancelación por pasajero. | E3 · ofertas y asignación, E4 · tarifa y cobro |
-| D6 | El pasajero no puede cancelar con el chofer en camino. | El pasajero cancela en `SOLICITADO`, `ASIGNADO` y `CHOFER_EN_CAMINO` (§6.1). | `cancelarPorPasajero` solo admite `SOLICITADO` y `ASIGNADO` (consecuencia de D5). | E3 · ofertas y asignación |
-| D7 | Faltan atributos del viaje. | `iniciadoEn`, `distanciaRealM`, `tiempoRealS`, `tarifaFinal` (§4.10). | No existen. `POST /viajes/{id}/finalizar` solo fija `cerradoEn`. | E4 · tarifa y cobro |
+| D5 | ~~Faltan estados del viaje.~~ **Resuelta.** | Nueve estados con transición `ASIGNADO → CHOFER_EN_CAMINO → EN_CURSO → FINALIZADO`, `iniciadoEn` y cancelación por chofer (§6.1). | El dominio, la migración 013, el repositorio y las rutas `/en-camino` e `/iniciar` implementan la máquina. Excepción cerrada: `asignar()` sobre terminal devuelve `VIAJE_NO_DISPONIBLE` (ADR-0004), no `TRANSICION_INVALIDA`. | Resuelta en E3; queda la integración con ofertas (D2) |
+| D6 | ~~El pasajero no puede cancelar con el chofer en camino.~~ **Resuelta.** | El pasajero cancela en `SOLICITADO`, `ASIGNADO` y `CHOFER_EN_CAMINO` (§6.1). | Una sola ruta actor-aware: pasajero dueño o chofer asignado; el estado final lo decide el vínculo con el recurso, no el rol. Sin soporte (D8). | Resuelta en E3 |
+| D7 | Atributos del viaje. | `iniciadoEn`, `distanciaRealM`, `tiempoRealS`, `tarifaFinal` (§4.10). | **`iniciadoEn` implementado** (migración 013, repositorio y vista pública). `distanciaRealM`, `tiempoRealS` y `tarifaFinalCentavos` siguen pendientes: `finalizar` fija `cerradoEn` y cobra `precioFijadoCentavos`. | Parcial; lo restante es E4 · tarifa y cobro |
 | D8 | Nombre del precio. | `precioFijado` (§4.10). | `precioFijadoCentavos`. Se propone adoptar el sufijo `Centavos` en todos los montos de la API (§1) y alinear el modelo. | E2 · cotizar y confirmar |
 | D9 | ~~Tarifa provisional distinta de la del modelo.~~ **Resuelta para el flujo nuevo.** | `Tarifa` versionada con `base`, `porKm`, `porMinuto` y `precioMaximo`; sin mínimo (§4.7, §7.2). | La cotización usa la tarifa publicada en la base, con componente por minuto y sin mínimo. `POST /viajes` sigue usando las variables `TARIFA_*` y el mínimo histórico hasta que se retire. | Resuelta en E2 · RF-23 + RF-16 |
 | D10 | Soporte no ve usuarios. | El operador ve los datos básicos de los participantes de los viajes que atiende (§3). | `GET /usuarios/{id}` solo admite al propio usuario y al administrador; soporte recibe 403. | E5 · historial y soporte |
@@ -1427,7 +1517,7 @@ Cada fila es algo que el código de `main` hace distinto de `docs/modelo.md` o d
 | D21 | Errores del parser fuera del límite global. | — | `express.json()` se ejecuta antes del rate limit global: un JSON mal formado o demasiado grande se rechaza sin contar para el límite y sin cabeceras `RateLimit`. | E1 · RF-01 y base transversal |
 | D22 | El límite global incluye `/health` y `/ready`. | — | El healthcheck de Docker y un monitor externo consumen cuota de la misma IP. Evaluar excluirlos del límite. | E1 · RF-01 y base transversal |
 | D23 | `GET /viajes/disponibles` sin paginación. | — | Devuelve hasta 50 viajes fijos; el caso de uso admite `limite`, pero la ruta no lo expone. Se resuelve con `GET /ofertas` (D2). | E3 · ofertas y asignación |
-| D24 | Se finaliza sin pasar por `EN_CURSO` y se cobra el precio fijado. | `EN_CURSO` → `FINALIZADO`, con tarifa final calculada sobre el recorrido real; el cobro nace `PENDIENTE` y se ejecuta después (§4.12, §6.1, §7.3). | `POST /viajes/{id}/finalizar` pasa de `ASIGNADO` a `FINALIZADO` y cobra `precioFijadoCentavos` en la misma transacción; el cobro queda `COBRADO` directamente. Es razonable mientras no existan `EN_CURSO` ni el recorrido. | E3 · ofertas y asignación (estados), E4 · tarifa y cobro (monto) |
+| D24 | ~~Se finaliza sin pasar por `EN_CURSO`.~~ **Resuelta en el estado**; sigue el monto. | `EN_CURSO` → `FINALIZADO`, con tarifa final calculada sobre el recorrido real; el cobro nace `PENDIENTE` y se ejecuta después (§4.12, §6.1, §7.3). | `POST /viajes/{id}/finalizar` exige `EN_CURSO` y responde `"Solo un viaje en curso puede finalizarse."`; desde `ASIGNADO` o `CHOFER_EN_CAMINO` da `409`. Sigue cobrando `precioFijadoCentavos` en la misma transacción y el cobro queda `COBRADO` directamente. | Estado resuelto en E3; monto pendiente de E4 · tarifa y cobro |
 | D25 | Finalizar exige clave de idempotencia. | Q8 proponía que avanzar el viaje fuera idempotente solo por su clave natural. | Finalizar exige `Idempotency-Key`, porque además cobra. Se propone adoptarlo en el modelo y en la política de idempotencia (ya está en `docs/politica-de-idempotencia.md`). | E1 · RF-01 y base transversal |
 | D26 | El límite de viajes se evalúa antes que el rol. | — | En `/viajes`, el limitador corre antes de `crearAutorizacionPorRol`: un pasajero que llama a `/aceptar` o `/finalizar` recibe 403, pero consume cupo del límite de viajes de su IP. | E1 · RF-01 y base transversal |
 | D27 | `finalizar` sobre un viaje `SOLICITADO` responde 403. | Un estado que no admite la operación es `TRANSICION_INVALIDA` (§9.1). | Como el viaje no tiene chofer, el caso de uso responde `403 NO_AUTORIZADO` (`"Solo el chofer asignado puede finalizar este viaje."`) en lugar de `409`. | E3 · ofertas y asignación |

@@ -210,7 +210,7 @@ export const casosViajesA = [
       afirmarEstado(finalizarAjeno, 403, 'chofer ajeno intenta finalizar');
       afirmarCodigo(finalizarAjeno, 'NO_AUTORIZADO', 'finalización por chofer ajeno');
 
-      const matrizCancelar = ['chofer1', 'pasajero2', 'admin', 'soporte'];
+      const matrizCancelar = ['chofer2', 'pasajero2', 'admin', 'soporte'];
 
       for (const clave of matrizCancelar) {
         const respuesta = await contexto.solicitar(`/viajes/${id}/cancelar`, {
@@ -222,7 +222,7 @@ export const casosViajesA = [
         afirmarCodigo(respuesta, 'NO_AUTORIZADO', `cancelar como ${clave}`);
       }
 
-      evidencia(contexto, 'Cancelar: solo el pasajero dueño; resto 403');
+      evidencia(contexto, 'Cancelar: solo pasajero dueño o chofer asignado; resto 403');
 
       for (const [clave, esperado] of [
         ['pasajero', 200],
@@ -279,8 +279,8 @@ export const casosViajesA = [
       );
       evidencia(contexto, 'Perfil de chofer: propio 200; admin habilita 200; resto 403');
 
-      const cancelado = await cancelarViaje(contexto, id);
-      afirmar(cancelado.estado === 'CANCELADO_POR_PASAJERO', 'No se canceló el viaje de prueba.');
+      const cancelado = await cancelarViaje(contexto, id, { actor: 'chofer1' });
+      afirmar(cancelado.estado === 'CANCELADO_POR_CHOFER', 'No se canceló el viaje por el chofer.');
     },
   },
 ];

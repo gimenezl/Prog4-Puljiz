@@ -35,13 +35,19 @@ async function insertarViajeCrudo(
     choferId = null,
     distanciaEstimadaM = 1200,
     precioFijadoCentavos = 150000,
+    asignadoEn = null,
+    iniciadoEn = null,
+    cerradoEn = null,
+    canceladoPorId = null,
+    motivoCancelacion = null,
   } = {},
 ) {
   await kit.baseDeDatos.query(
     `INSERT INTO viajes (
        id, pasajero_id, origen_lat, origen_lng, destino_lat, destino_lng,
-       distancia_estimada_m, precio_fijado_centavos, chofer_id, estado, solicitado_en
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+       distancia_estimada_m, precio_fijado_centavos, chofer_id, estado, solicitado_en,
+       asignado_en, iniciado_en, cerrado_en, cancelado_por_id, motivo_cancelacion
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [
       id,
       pasajeroId,
@@ -54,6 +60,11 @@ async function insertarViajeCrudo(
       choferId,
       estado,
       new Date(),
+      asignadoEn,
+      iniciadoEn,
+      cerradoEn,
+      canceladoPorId,
+      motivoCancelacion,
     ],
   );
 
@@ -171,6 +182,64 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     ]) {
       assert.equal(nombres.has(indice), true, `falta el índice ${indice}`);
     }
+
+    const columnaInicio = await kit.baseDeDatos.query(
+      `SELECT data_type, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'viajes'
+          AND column_name = 'iniciado_en'`,
+    );
+    assert.deepEqual(columnaInicio.rows, [
+      { data_type: 'timestamp with time zone', is_nullable: 'YES' },
+    ]);
+
+    const restricciones = await kit.baseDeDatos.query(
+      `SELECT conname
+         FROM pg_constraint
+        WHERE conrelid = 'viajes'::regclass AND contype = 'c'`,
+    );
+    const nombresRestricciones = new Set(restricciones.rows.map((fila) => fila.conname));
+
+    for (const restriccion of [
+      'viajes_estado_check',
+      'viajes_chofer_coherente_check',
+      'viajes_cancelacion_check',
+      'viajes_iniciado_check',
+      'viajes_cierre_check',
+      'viajes_cancelacion_autor_check',
+      'viajes_cancelado_por_chofer_check',
+    ]) {
+      assert.equal(
+        nombresRestricciones.has(restriccion),
+        true,
+        `falta la restricción ${restriccion}`,
+      );
+    }
+  });
+
+  test('aplicar dos veces las migraciones conserva los checks de la migración 013', async () => {
+    await aplicarMigraciones(kit.baseDeDatos);
+    await aplicarMigraciones(kit.baseDeDatos);
+
+    const restricciones = await kit.baseDeDatos.query(
+      `SELECT conname
+         FROM pg_constraint
+        WHERE conrelid = 'viajes'::regclass AND contype = 'c'`,
+    );
+    const nombres = restricciones.rows.map((fila) => fila.conname);
+
+    for (const restriccion of [
+      'viajes_iniciado_check',
+      'viajes_cierre_check',
+      'viajes_cancelacion_autor_check',
+      'viajes_cancelado_por_chofer_check',
+    ]) {
+      assert.equal(
+        nombres.filter((nombre) => nombre === restriccion).length,
+        1,
+        `la restricción ${restriccion} debe existir una sola vez tras reaplicar las migraciones`,
+      );
+    }
   });
 
   test('los repositorios persisten y recuperan usuarios, choferes, viajes y claves', async () => {
@@ -223,6 +292,26 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
 
     const duplicada = await kit.repositorioClavesIdempotencia.crear(registro);
     assert.equal(duplicada, false);
+  });
+
+  test('el repositorio recupera iniciadoEn como Date tras aceptar, ir en camino e iniciar', async () => {
+    const { viaje, chofer } = await kit.crearViajeAsignado();
+
+    const asignado = await kit.repositorioViajes.buscarPorId(viaje.id);
+    assert.equal(asignado.estado, 'ASIGNADO');
+    assert.equal(asignado.iniciadoEn, null);
+
+    await kit.marcarEnCamino({ viajeId: viaje.id, choferId: chofer.usuario.id });
+    const enCamino = await kit.repositorioViajes.buscarPorId(viaje.id);
+    assert.equal(enCamino.estado, 'CHOFER_EN_CAMINO');
+    assert.equal(enCamino.iniciadoEn, null);
+
+    const iniciado = await kit.iniciarViaje({ viajeId: viaje.id, choferId: chofer.usuario.id });
+    const leido = await kit.repositorioViajes.buscarPorId(viaje.id);
+
+    assert.equal(leido.estado, 'EN_CURSO');
+    assert.equal(leido.iniciadoEn instanceof Date, true);
+    assert.equal(leido.iniciadoEn.toISOString(), iniciado.iniciadoEn.toISOString());
   });
 
   test('el repositorio de vehículos guarda, reemplaza y rechaza patentes duplicadas', async () => {
@@ -342,6 +431,80 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       (error) => error.code === '23503',
     );
 
+    const ahora = new Date();
+
+    await assert.rejects(
+      () =>
+        insertarViajeCrudo(kit, {
+          pasajeroId: pasajero.id,
+          estado: 'EN_CURSO',
+          choferId: chofer.id,
+          asignadoEn: ahora,
+        }),
+      (error) => error.code === '23514',
+    );
+
+    await assert.rejects(
+      () =>
+        insertarViajeCrudo(kit, {
+          pasajeroId: pasajero.id,
+          estado: 'ASIGNADO',
+          choferId: chofer.id,
+          asignadoEn: ahora,
+          iniciadoEn: ahora,
+        }),
+      (error) => error.code === '23514',
+    );
+
+    await assert.rejects(
+      () =>
+        insertarViajeCrudo(kit, {
+          pasajeroId: pasajero.id,
+          estado: 'FINALIZADO',
+          choferId: chofer.id,
+          asignadoEn: ahora,
+          iniciadoEn: ahora,
+        }),
+      (error) => error.code === '23514',
+    );
+
+    await assert.rejects(
+      () =>
+        insertarViajeCrudo(kit, {
+          pasajeroId: pasajero.id,
+          estado: 'CANCELADO_POR_CHOFER',
+          choferId: null,
+          cerradoEn: ahora,
+          canceladoPorId: chofer.id,
+          motivoCancelacion: 'Sin chofer asociado',
+        }),
+      (error) => error.code === '23514',
+    );
+
+    await assert.rejects(
+      () =>
+        insertarViajeCrudo(kit, {
+          pasajeroId: pasajero.id,
+          estado: 'CANCELADO_POR_PASAJERO',
+          cerradoEn: ahora,
+          motivoCancelacion: 'Sin autor',
+        }),
+      (error) => error.code === '23514',
+    );
+
+    const enCurso = await insertarViajeCrudo(kit, {
+      pasajeroId: pasajero.id,
+      estado: 'EN_CURSO',
+      choferId: chofer.id,
+      asignadoEn: ahora,
+      iniciadoEn: ahora,
+    });
+
+    await kit.baseDeDatos.query(
+      `UPDATE viajes SET estado = 'FINALIZADO', cerrado_en = NOW() WHERE id = $1`,
+      [enCurso],
+    );
+
     const primerViaje = await insertarViajeCrudo(kit, { pasajeroId: pasajero.id });
     const segundoViaje = await insertarViajeCrudo(kit, { pasajeroId: pasajero.id });
 
@@ -377,6 +540,44 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
         ),
       (error) => error instanceof ErrorDeDominio && error.codigo === 'EMAIL_YA_REGISTRADO',
     );
+  });
+
+  test('la base rechaza motivos de cancelación mayores a 500 caracteres', async () => {
+    const pasajero = await kit.crearUsuario();
+
+    // La migración 002 impone VARCHAR(500) y exige motivo no nulo en los
+    // estados cancelados; no define un CHECK de motivo no vacío (eso lo
+    // valida el dominio). Sí rechaza el desbordamiento de longitud.
+    await assert.rejects(
+      () =>
+        insertarViajeCrudo(kit, {
+          pasajeroId: pasajero.id,
+          estado: 'CANCELADO_POR_PASAJERO',
+          cerradoEn: new Date(),
+          canceladoPorId: pasajero.id,
+          motivoCancelacion: 'x'.repeat(501),
+        }),
+      (error) => error.code === '22001',
+    );
+
+    const rechazados = await kit.baseDeDatos.query(
+      'SELECT COUNT(*)::int AS total FROM viajes WHERE pasajero_id = $1',
+      [pasajero.id],
+    );
+    assert.equal(rechazados.rows[0].total, 0);
+
+    const limite = await insertarViajeCrudo(kit, {
+      pasajeroId: pasajero.id,
+      estado: 'CANCELADO_POR_PASAJERO',
+      cerradoEn: new Date(),
+      canceladoPorId: pasajero.id,
+      motivoCancelacion: 'y'.repeat(500),
+    });
+    const guardado = await kit.baseDeDatos.query(
+      'SELECT motivo_cancelacion FROM viajes WHERE id = $1',
+      [limite],
+    );
+    assert.equal(guardado.rows[0].motivo_cancelacion.length, 500);
   });
 
   test('SELECT FOR UPDATE bloquea la fila del viaje hasta el commit', async () => {
@@ -430,9 +631,9 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     assert.equal(leido.disponible, true);
   });
 
-  test('20 aceptaciones concurrentes: exactamente un chofer gana', async () => {
+  test('50 aceptaciones concurrentes: exactamente un chofer gana', async () => {
     const { viaje } = await kit.crearViajeDePrueba();
-    const choferes = await Promise.all(Array.from({ length: 20 }, () => kit.crearChofer()));
+    const choferes = await Promise.all(Array.from({ length: 50 }, () => kit.crearChofer()));
 
     const resultados = await Promise.allSettled(
       choferes.map(({ usuario }) => kit.aceptarViaje({ viajeId: viaje.id, choferId: usuario.id })),
@@ -442,7 +643,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     const fallos = resultados.filter((resultado) => resultado.status === 'rejected');
 
     assert.equal(exitos.length, 1);
-    assert.equal(fallos.length, 19);
+    assert.equal(fallos.length, 49);
 
     for (const fallo of fallos) {
       assert.equal(fallo.reason instanceof ErrorDeDominio, true);
@@ -551,7 +752,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
   });
 
   test('finalizar y cobrar persiste viaje, cobro, chofer e idempotencia en una sola transacción', async () => {
-    const { viaje, chofer, pasajero } = await kit.crearViajeAsignado();
+    const { viaje, chofer, pasajero } = await kit.crearViajeEnCurso();
     const claveIdempotencia = 'finalizar-postgres';
 
     const resultado = await kit.finalizarViaje({
@@ -567,10 +768,11 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     assert.equal(resultado.cobro.referencia, `SIM-${viaje.id}`);
 
     const filaViaje = await kit.baseDeDatos.query(
-      'SELECT estado, cerrado_en FROM viajes WHERE id = $1',
+      'SELECT estado, iniciado_en, cerrado_en FROM viajes WHERE id = $1',
       [viaje.id],
     );
     assert.equal(filaViaje.rows[0].estado, 'FINALIZADO');
+    assert.notEqual(filaViaje.rows[0].iniciado_en, null);
     assert.notEqual(filaViaje.rows[0].cerrado_en, null);
 
     const filaCobro = await kit.baseDeDatos.query(
@@ -621,7 +823,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
   });
 
   test('8 finalizaciones concurrentes con la misma clave generan un solo cobro', async () => {
-    const { viaje, chofer } = await kit.crearViajeAsignado();
+    const { viaje, chofer } = await kit.crearViajeEnCurso();
     const claveIdempotencia = 'finalizar-concurrente';
 
     const resultados = await Promise.all(
@@ -653,7 +855,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
   });
 
   test('finalizaciones concurrentes con claves distintas generan un solo cobro', async () => {
-    const { viaje, chofer } = await kit.crearViajeAsignado();
+    const { viaje, chofer } = await kit.crearViajeEnCurso();
 
     const resultados = await Promise.allSettled(
       Array.from({ length: 6 }, (_, indice) =>
@@ -683,7 +885,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
   });
 
   test('una clave reutilizada con otro viaje no cobra el segundo viaje', async () => {
-    const primero = await kit.crearViajeAsignado();
+    const primero = await kit.crearViajeEnCurso();
     const claveIdempotencia = 'clave-entre-viajes';
 
     await kit.finalizarViaje({
@@ -692,7 +894,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       claveIdempotencia,
     });
 
-    const segundo = await kit.crearViajeAsignado({ chofer: primero.chofer });
+    const segundo = await kit.crearViajeEnCurso({ chofer: primero.chofer });
 
     await assert.rejects(
       () =>
@@ -705,13 +907,55 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
     );
 
     const viaje = await kit.repositorioViajes.buscarPorId(segundo.viaje.id);
-    assert.equal(viaje.estado, 'ASIGNADO');
+    assert.equal(viaje.estado, 'EN_CURSO');
 
     const cobros = await kit.baseDeDatos.query(
       'SELECT COUNT(*)::int AS total FROM cobros_simulados WHERE viaje_id = $1',
       [segundo.viaje.id],
     );
     assert.equal(cobros.rows[0].total, 0);
+  });
+
+  test('finalizar con clave y cancelar por el chofer sobre EN_CURSO: un solo cobro y chofer libre', async () => {
+    const { viaje, chofer } = await kit.crearViajeEnCurso();
+
+    const resultados = await Promise.allSettled([
+      kit.finalizarViaje({
+        viajeId: viaje.id,
+        choferId: chofer.usuario.id,
+        claveIdempotencia: 'finalizar-vs-cancelar-chof',
+      }),
+      kit.cancelarViaje({
+        viajeId: viaje.id,
+        actor: { usuarioId: chofer.usuario.id, rol: ROLES.CHOFER },
+        motivo: 'No puedo continuar el viaje',
+      }),
+    ]);
+
+    const exitosos = resultados.filter((resultado) => resultado.status === 'fulfilled');
+    const rechazados = resultados.filter((resultado) => resultado.status === 'rejected');
+    assert.equal(exitosos.length, 1);
+    assert.equal(rechazados.length, 1);
+    assert.equal(rechazados[0].reason.codigo, 'TRANSICION_INVALIDA');
+
+    const fila = await kit.baseDeDatos.query('SELECT estado FROM viajes WHERE id = $1', [viaje.id]);
+    const cobros = await kit.baseDeDatos.query(
+      'SELECT COUNT(*)::int AS total FROM cobros_simulados WHERE viaje_id = $1',
+      [viaje.id],
+    );
+    const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuario.id);
+
+    // El dominio no permite cancelar desde EN_CURSO, así que finalizar gana
+    // siempre. Se cubre igualmente la rama alternativa para que un cambio de
+    // reglas no deje un viaje terminal con el chofer ocupado sin detectarlo.
+    if (fila.rows[0].estado === 'FINALIZADO') {
+      assert.equal(exitosos[0].value.reutilizada, false);
+      assert.equal(cobros.rows[0].total, 1);
+    } else {
+      assert.equal(fila.rows[0].estado, 'CANCELADO_POR_CHOFER');
+      assert.equal(cobros.rows[0].total, 0);
+    }
+    assert.equal(perfil.viajeActivoId, null);
   });
 
   test('aceptación y cancelación simultáneas dejan el viaje cancelado y al chofer libre', async () => {
@@ -722,7 +966,7 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       kit.aceptarViaje({ viajeId: viaje.id, choferId: chofer.id }),
       kit.cancelarViaje({
         viajeId: viaje.id,
-        pasajeroId: pasajero.id,
+        actor: { usuarioId: pasajero.id, rol: ROLES.PASAJERO },
         motivo: 'Cambio de planes',
       }),
     ]);
@@ -749,6 +993,311 @@ describirPostgres('PostgreSQL real con compose.test.yaml', () => {
       'SELECT COUNT(*)::int AS total FROM choferes WHERE viaje_activo_id IS NOT NULL',
     );
     assert.equal(activos.rows[0].total, 0);
+  });
+
+  test('cancelación por un chofer no asignado compite con una aceptación y falla NO_AUTORIZADO', async () => {
+    const { viaje } = await kit.crearViajeDePrueba();
+    const { usuario: choferNoAsignado } = await kit.crearChofer();
+    const { usuario: choferAcepta } = await kit.crearChofer();
+
+    const resultados = await Promise.allSettled([
+      kit.cancelarViaje({
+        viajeId: viaje.id,
+        actor: { usuarioId: choferNoAsignado.id, rol: ROLES.CHOFER },
+        motivo: 'No estoy asignado a este viaje',
+      }),
+      kit.aceptarViaje({ viajeId: viaje.id, choferId: choferAcepta.id }),
+    ]);
+
+    const [cancelacion, aceptacion] = resultados;
+
+    // Expected: el chofer nunca está asignado al viaje, gane la carrera quien
+    // gane, así que la cancelación siempre termina con NO_AUTORIZADO.
+    assert.equal(cancelacion.status, 'rejected');
+    assert.equal(cancelacion.reason.codigo, 'NO_AUTORIZADO');
+    assert.equal(aceptacion.status, 'fulfilled');
+
+    const fila = await kit.baseDeDatos.query(
+      'SELECT estado, chofer_id, cancelado_por_id FROM viajes WHERE id = $1',
+      [viaje.id],
+    );
+    assert.equal(fila.rows[0].estado, 'ASIGNADO');
+    assert.equal(fila.rows[0].chofer_id, choferAcepta.id);
+    assert.equal(fila.rows[0].cancelado_por_id, null);
+
+    const perfilNoAsignado = await kit.repositorioChoferes.buscarPorUsuarioId(choferNoAsignado.id);
+    const perfilAsignado = await kit.repositorioChoferes.buscarPorUsuarioId(choferAcepta.id);
+    assert.equal(perfilNoAsignado.viajeActivoId, null);
+    assert.equal(perfilAsignado.viajeActivoId, viaje.id);
+  });
+
+  test('cancelación del chofer asignado vs aceptación de otro chofer sin dejar ocupados', async () => {
+    const { viaje, chofer } = await kit.crearViajeAsignado();
+    const { usuario: segundoChofer } = await kit.crearChofer();
+
+    const resultados = await Promise.allSettled([
+      kit.cancelarViaje({
+        viajeId: viaje.id,
+        actor: { usuarioId: chofer.usuario.id, rol: ROLES.CHOFER },
+        motivo: 'No puedo llegar al origen',
+      }),
+      kit.aceptarViaje({ viajeId: viaje.id, choferId: segundoChofer.id }),
+    ]);
+
+    const [cancelacion, aceptacion] = resultados;
+    assert.equal(cancelacion.status, 'fulfilled');
+    assert.equal(cancelacion.value.estado, 'CANCELADO_POR_CHOFER');
+    assert.equal(aceptacion.status, 'rejected');
+    assert.equal(aceptacion.reason.codigo, 'VIAJE_NO_DISPONIBLE');
+
+    const fila = await kit.baseDeDatos.query('SELECT estado, chofer_id FROM viajes WHERE id = $1', [
+      viaje.id,
+    ]);
+    assert.equal(fila.rows[0].estado, 'CANCELADO_POR_CHOFER');
+    assert.equal(fila.rows[0].chofer_id, chofer.usuario.id);
+
+    for (const usuarioId of [chofer.usuario.id, segundoChofer.id]) {
+      const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(usuarioId);
+      assert.equal(perfil.viajeActivoId, null);
+    }
+
+    const ocupados = await kit.baseDeDatos.query(
+      'SELECT COUNT(*)::int AS total FROM choferes WHERE viaje_activo_id = $1',
+      [viaje.id],
+    );
+    assert.equal(ocupados.rows[0].total, 0);
+  });
+
+  test('el chofer asignado cancela el viaje y queda libre', async () => {
+    const { viaje, chofer } = await kit.crearViajeAsignado();
+
+    const cancelado = await kit.cancelarViaje({
+      viajeId: viaje.id,
+      actor: { usuarioId: chofer.usuario.id, rol: ROLES.CHOFER },
+      motivo: 'No puedo llegar al origen',
+    });
+
+    assert.equal(cancelado.estado, 'CANCELADO_POR_CHOFER');
+    assert.equal(cancelado.canceladoPorId, chofer.usuario.id);
+
+    const fila = await kit.baseDeDatos.query(
+      `SELECT estado, chofer_id, cancelado_por_id, motivo_cancelacion, cerrado_en
+         FROM viajes
+        WHERE id = $1`,
+      [viaje.id],
+    );
+    assert.equal(fila.rows[0].estado, 'CANCELADO_POR_CHOFER');
+    assert.equal(fila.rows[0].chofer_id, chofer.usuario.id);
+    assert.equal(fila.rows[0].cancelado_por_id, chofer.usuario.id);
+    assert.equal(fila.rows[0].motivo_cancelacion, 'No puedo llegar al origen');
+    assert.notEqual(fila.rows[0].cerrado_en, null);
+
+    const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuario.id);
+    assert.equal(perfil.viajeActivoId, null);
+    assert.equal(perfil.estado, 'DISPONIBLE');
+  });
+
+  test('el pasajero puede cancelar con el chofer en camino y lo libera', async () => {
+    const { viaje, chofer, pasajero } = await kit.crearViajeEnCamino();
+
+    const cancelado = await kit.cancelarViaje({
+      viajeId: viaje.id,
+      actor: { usuarioId: pasajero.id, rol: ROLES.PASAJERO },
+      motivo: 'Cambio de planes',
+    });
+
+    assert.equal(cancelado.estado, 'CANCELADO_POR_PASAJERO');
+    assert.equal(cancelado.canceladoPorId, pasajero.id);
+
+    const fila = await kit.baseDeDatos.query(
+      'SELECT estado, iniciado_en, cancelado_por_id FROM viajes WHERE id = $1',
+      [viaje.id],
+    );
+    assert.equal(fila.rows[0].estado, 'CANCELADO_POR_PASAJERO');
+    assert.equal(fila.rows[0].iniciado_en, null);
+    assert.equal(fila.rows[0].cancelado_por_id, pasajero.id);
+
+    const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuario.id);
+    assert.equal(perfil.viajeActivoId, null);
+  });
+
+  test('marcar en camino y cancelar por el pasajero sobre ASIGNADO deja un estado coherente', async () => {
+    const { viaje, chofer, pasajero } = await kit.crearViajeAsignado();
+
+    const resultados = await Promise.allSettled([
+      kit.marcarEnCamino({ viajeId: viaje.id, choferId: chofer.usuario.id }),
+      kit.cancelarViaje({
+        viajeId: viaje.id,
+        actor: { usuarioId: pasajero.id, rol: ROLES.PASAJERO },
+        motivo: 'Cambio de planes',
+      }),
+    ]);
+
+    const [enCamino, cancelacion] = resultados;
+
+    assert.equal(
+      resultados.some((resultado) => resultado.status === 'fulfilled'),
+      true,
+    );
+
+    for (const rechazo of resultados.filter((resultado) => resultado.status === 'rejected')) {
+      assert.equal(rechazo.reason.codigo, 'TRANSICION_INVALIDA');
+    }
+
+    const fila = await kit.baseDeDatos.query(
+      'SELECT estado, iniciado_en FROM viajes WHERE id = $1',
+      [viaje.id],
+    );
+    const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuario.id);
+
+    // El dominio permite cancelar desde CHOFER_EN_CAMINO, así que si
+    // `marcarEnCamino` adquiere el bloqueo primero ambas operaciones pueden
+    // completarse serializadas. Lo que no puede pasar es un viaje cancelado con
+    // el chofer ocupado ni un en-camino sobre un viaje cancelado.
+    assert.equal(
+      ['CHOFER_EN_CAMINO', 'CANCELADO_POR_PASAJERO'].includes(fila.rows[0].estado),
+      true,
+    );
+
+    if (cancelacion.status === 'fulfilled') {
+      assert.equal(fila.rows[0].estado, 'CANCELADO_POR_PASAJERO');
+      assert.equal(fila.rows[0].iniciado_en, null);
+      assert.equal(perfil.viajeActivoId, null);
+    } else {
+      assert.equal(enCamino.status, 'fulfilled');
+      assert.equal(fila.rows[0].estado, 'CHOFER_EN_CAMINO');
+      assert.equal(perfil.viajeActivoId, viaje.id);
+    }
+  });
+
+  test('el caso de uso rechaza motivos vacíos y mayores a 500 caracteres', async () => {
+    const { viaje, pasajero } = await kit.crearViajeDePrueba();
+    const actor = { usuarioId: pasajero.id, rol: ROLES.PASAJERO };
+
+    for (const motivo of ['', '   ', 'x'.repeat(501)]) {
+      await assert.rejects(
+        () => kit.cancelarViaje({ viajeId: viaje.id, actor, motivo }),
+        (error) => error instanceof ErrorDeDominio && error.codigo === 'DATOS_INVALIDOS',
+      );
+    }
+
+    const sinCancelar = await kit.baseDeDatos.query(
+      'SELECT estado, motivo_cancelacion FROM viajes WHERE id = $1',
+      [viaje.id],
+    );
+    assert.equal(sinCancelar.rows[0].estado, 'SOLICITADO');
+    assert.equal(sinCancelar.rows[0].motivo_cancelacion, null);
+
+    const cancelado = await kit.cancelarViaje({
+      viajeId: viaje.id,
+      actor,
+      motivo: 'y'.repeat(500),
+    });
+    assert.equal(cancelado.motivoCancelacion.length, 500);
+  });
+
+  test('marcar en camino e iniciar concurrentes: solo una transición gana', async () => {
+    const { viaje, chofer } = await kit.crearViajeAsignado();
+
+    const enCamino = await Promise.allSettled(
+      Array.from({ length: 6 }, () =>
+        kit.marcarEnCamino({ viajeId: viaje.id, choferId: chofer.usuario.id }),
+      ),
+    );
+
+    assert.equal(enCamino.filter((resultado) => resultado.status === 'fulfilled').length, 1);
+
+    for (const rechazo of enCamino.filter((resultado) => resultado.status === 'rejected')) {
+      assert.equal(rechazo.reason.codigo, 'TRANSICION_INVALIDA');
+    }
+
+    const inicios = await Promise.allSettled(
+      Array.from({ length: 6 }, () =>
+        kit.iniciarViaje({ viajeId: viaje.id, choferId: chofer.usuario.id }),
+      ),
+    );
+
+    const exitosos = inicios.filter((resultado) => resultado.status === 'fulfilled');
+    assert.equal(exitosos.length, 1);
+    assert.equal(exitosos[0].value.estado, 'EN_CURSO');
+
+    for (const rechazo of inicios.filter((resultado) => resultado.status === 'rejected')) {
+      assert.equal(rechazo.reason.codigo, 'TRANSICION_INVALIDA');
+    }
+
+    const fila = await kit.baseDeDatos.query(
+      'SELECT estado, iniciado_en FROM viajes WHERE id = $1',
+      [viaje.id],
+    );
+    assert.equal(fila.rows[0].estado, 'EN_CURSO');
+    assert.notEqual(fila.rows[0].iniciado_en, null);
+  });
+
+  test('inicio y cancelación simultáneos dejan un único resultado coherente', async () => {
+    const { viaje, chofer, pasajero } = await kit.crearViajeEnCamino();
+
+    const [inicio, cancelacion] = await Promise.allSettled([
+      kit.iniciarViaje({ viajeId: viaje.id, choferId: chofer.usuario.id }),
+      kit.cancelarViaje({
+        viajeId: viaje.id,
+        actor: { usuarioId: pasajero.id, rol: ROLES.PASAJERO },
+        motivo: 'Cambio de planes',
+      }),
+    ]);
+
+    assert.equal(
+      [inicio, cancelacion].filter((resultado) => resultado.status === 'fulfilled').length,
+      1,
+    );
+
+    for (const rechazo of [inicio, cancelacion].filter(
+      (resultado) => resultado.status === 'rejected',
+    )) {
+      assert.equal(rechazo.reason.codigo, 'TRANSICION_INVALIDA');
+    }
+
+    const fila = await kit.baseDeDatos.query(
+      'SELECT estado, iniciado_en FROM viajes WHERE id = $1',
+      [viaje.id],
+    );
+    const perfil = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuario.id);
+
+    if (fila.rows[0].estado === 'EN_CURSO') {
+      assert.notEqual(fila.rows[0].iniciado_en, null);
+      assert.equal(perfil.viajeActivoId, viaje.id);
+    } else {
+      assert.equal(fila.rows[0].estado, 'CANCELADO_POR_PASAJERO');
+      assert.equal(fila.rows[0].iniciado_en, null);
+      assert.equal(perfil.viajeActivoId, null);
+    }
+  });
+
+  test('finalizar desde ASIGNADO se rechaza y no genera cobro', async () => {
+    const { viaje, chofer } = await kit.crearViajeAsignado();
+
+    await assert.rejects(
+      () =>
+        kit.finalizarViaje({
+          viajeId: viaje.id,
+          choferId: chofer.usuario.id,
+          claveIdempotencia: 'finalizar-asignado',
+        }),
+      (error) => error.codigo === 'TRANSICION_INVALIDA',
+    );
+
+    const fila = await kit.baseDeDatos.query(
+      'SELECT estado, iniciado_en, cerrado_en FROM viajes WHERE id = $1',
+      [viaje.id],
+    );
+    assert.equal(fila.rows[0].estado, 'ASIGNADO');
+    assert.equal(fila.rows[0].iniciado_en, null);
+    assert.equal(fila.rows[0].cerrado_en, null);
+
+    const cobros = await kit.baseDeDatos.query(
+      'SELECT COUNT(*)::int AS total FROM cobros_simulados WHERE viaje_id = $1',
+      [viaje.id],
+    );
+    assert.equal(cobros.rows[0].total, 0);
   });
 
   test('el composition root opera de extremo a extremo sobre PostgreSQL real', async (t) => {

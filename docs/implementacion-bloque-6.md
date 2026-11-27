@@ -1,5 +1,10 @@
 # Implementación del Bloque 6 — PostgreSQL real para tests
 
+> **Nota de snapshot:** las cifras de este bloque son las originales (20
+> aceptaciones). El test vigente usa **50**, se ejecutó con Docker y pasó en los
+> 48 tests PostgreSQL reales. Estado vigente:
+> `docs/rf09-rf07-rf22-rf08-rf10-requerimientos-y-cambios.md` (§3.4 y §9).
+
 Este bloque agrega una base de datos PostgreSQL dedicada y descartable para
 probar el backend contra el motor real. Hasta el Bloque 5 la concurrencia se
 verificaba con adaptadores en memoria; ahora también se ejecutan las consultas
@@ -229,7 +234,7 @@ Casos cubiertos:
 | Restricciones | `CHECK` de disponibilidad, estado y coherencia; clave foránea; índice único parcial; email duplicado. |
 | `SELECT ... FOR UPDATE` | Una segunda transacción queda bloqueada hasta el commit de la primera. |
 | Rollback | Un error dentro de la unidad de trabajo revierte el cambio. |
-| 20 aceptaciones concurrentes | Exactamente un chofer gana; 19 reciben `VIAJE_NO_DISPONIBLE`; solo el ganador queda ocupado. |
+| ~~20 aceptaciones concurrentes~~ **50 en el test vigente** | Exactamente un chofer gana; 49 reciben `VIAJE_NO_DISPONIBLE`; solo el ganador queda ocupado. |
 | Chofer con dos viajes | Una aceptación gana y la otra recibe `CHOFER_OCUPADO`; el viaje perdedor sigue `SOLICITADO`. |
 | Idempotencia concurrente | Ocho solicitudes con la misma clave generan un solo viaje y un solo registro; conflicto de contenido y vencimiento. |
 | Aceptar vs. cancelar | El viaje termina cancelado y el chofer queda libre. |
@@ -244,12 +249,12 @@ la fila. Esto demuestra que el bloqueo no es una simulación en memoria.
 
 ### Detalle de las aceptaciones concurrentes
 
-Se crean 20 choferes habilitados y disponibles y un viaje. Las 20 aceptaciones
-salen en paralelo sobre el mismo viaje. El resultado esperado es:
+El test original creaba 20 choferes; el vigente crea 50. Las aceptaciones salen
+en paralelo sobre el mismo viaje. El resultado esperado es:
 
 ```text
 1 aceptación exitosa
-19 rechazos VIAJE_NO_DISPONIBLE
+49 rechazos VIAJE_NO_DISPONIBLE
 1 fila en viajes con estado ASIGNADO
 1 chofer con viaje_activo_id
 ```

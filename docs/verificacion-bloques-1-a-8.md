@@ -1,5 +1,10 @@
 # Verificación del estado actual y auditoría de los bloques 1 a 8
 
+> **Nota de snapshot (11/11/2026):** estas cifras son anteriores a RF-09/RF-10.
+> Los conteos vigentes son 189 unitarios, 58 de integración, 48 PostgreSQL reales
+> y 15/16 en los verificadores; el test de aceptaciones concurrentes usa 50, no
+> 20. Ver `docs/rf09-rf07-rf22-rf08-rf10-requerimientos-y-cambios.md` (§3.4 y §9).
+
 - **Fecha de verificación:** 11 de noviembre de 2026.
 - **Rama:** `preparacion-de-entorno`.
 - **Commit base:** `aed5e19` (`feat: dockerizar el arranque y documentar los bloques 1 y 3`).
@@ -318,8 +323,8 @@ Cumplido:
 - Orden global de bloqueo Viaje → Chofer.
 - Reintentos acotados ante serialización o interbloqueo.
 - Test de 50 aceptaciones simultáneas en memoria: exactamente un ganador.
-- Test de 20 aceptaciones concurrentes contra PostgreSQL real: exactamente un
-  ganador.
+- Test de ~~20~~ **50** aceptaciones concurrentes contra PostgreSQL real:
+  exactamente un ganador; ejecutado en vivo (48/48).
 - Test de un chofer aceptando dos viajes a la vez.
 - Test de aceptación y cancelación simultáneas.
 - Idempotencia de creación de viajes con test en memoria, integración HTTP y

@@ -5,7 +5,9 @@ import { crearAceptarViaje } from '../../src/application/use-cases/viajes/acepta
 import { crearCancelarViaje } from '../../src/application/use-cases/viajes/cancelar-viaje.js';
 import { crearCrearViaje } from '../../src/application/use-cases/viajes/crear-viaje.js';
 import { crearFinalizarViaje } from '../../src/application/use-cases/viajes/finalizar-viaje.js';
+import { crearIniciarViaje } from '../../src/application/use-cases/viajes/iniciar-viaje.js';
 import { crearListarViajesDisponibles } from '../../src/application/use-cases/viajes/listar-viajes-disponibles.js';
+import { crearMarcarEnCamino } from '../../src/application/use-cases/viajes/marcar-en-camino.js';
 import { crearObtenerCobro } from '../../src/application/use-cases/viajes/obtener-cobro.js';
 import { crearObtenerViaje } from '../../src/application/use-cases/viajes/obtener-viaje.js';
 import { Chofer } from '../../src/domain/entities/chofer.js';
@@ -91,6 +93,15 @@ export function crearKitViajes({
       unidadDeTrabajo,
       reloj,
       vigenciaUbicacionMs: VIGENCIA_UBICACION_MS,
+    }),
+    marcarEnCamino: crearMarcarEnCamino({
+      repositorioViajes,
+      unidadDeTrabajo,
+    }),
+    iniciarViaje: crearIniciarViaje({
+      repositorioViajes,
+      unidadDeTrabajo,
+      reloj,
     }),
     cancelarViaje: crearCancelarViaje({
       repositorioViajes,
@@ -187,6 +198,28 @@ export function crearKitViajes({
     });
 
     return { viaje, chofer: conductor, pasajeroId: creado.viaje.pasajeroId };
+  };
+
+  /** Crea un viaje asignado y lo marca en camino. */
+  kit.crearViajeEnCamino = async (opciones = {}) => {
+    const asignado = await kit.crearViajeAsignado(opciones);
+    const viaje = await kit.marcarEnCamino({
+      viajeId: asignado.viaje.id,
+      choferId: asignado.chofer.usuarioId,
+    });
+
+    return { ...asignado, viaje };
+  };
+
+  /** Crea un viaje asignado, lo marca en camino y lo inicia. */
+  kit.crearViajeEnCurso = async (opciones = {}) => {
+    const enCamino = await kit.crearViajeEnCamino(opciones);
+    const viaje = await kit.iniciarViaje({
+      viajeId: enCamino.viaje.id,
+      choferId: enCamino.chofer.usuarioId,
+    });
+
+    return { ...enCamino, viaje };
   };
 
   return kit;

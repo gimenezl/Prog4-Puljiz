@@ -13,6 +13,8 @@ import { validarCuerpo, validarIdentificador } from '../validation.js';
 export function createViajesRouter({
   crearViaje,
   aceptarViaje,
+  marcarEnCamino,
+  iniciarViaje,
   cancelarViaje,
   finalizarViaje,
   obtenerViaje,
@@ -24,6 +26,7 @@ export function createViajesRouter({
   const router = Router();
   const soloPasajero = crearAutorizacionPorRol(ROLES.PASAJERO);
   const soloChofer = crearAutorizacionPorRol(ROLES.CHOFER);
+  const pasajeroOChofer = crearAutorizacionPorRol(ROLES.PASAJERO, ROLES.CHOFER);
 
   router.use(autenticacionRequerida);
 
@@ -104,6 +107,36 @@ export function createViajesRouter({
   );
 
   router.post(
+    '/:id/en-camino',
+    limitadorViajes,
+    soloChofer,
+    asyncHandler(async (req, res) => {
+      const viajeId = validarIdentificador(req.params.id);
+      const viaje = await marcarEnCamino({
+        viajeId,
+        choferId: req.autenticacion.usuarioId,
+      });
+
+      res.json({ viaje: viaje.aVistaPublica() });
+    }),
+  );
+
+  router.post(
+    '/:id/iniciar',
+    limitadorViajes,
+    soloChofer,
+    asyncHandler(async (req, res) => {
+      const viajeId = validarIdentificador(req.params.id);
+      const viaje = await iniciarViaje({
+        viajeId,
+        choferId: req.autenticacion.usuarioId,
+      });
+
+      res.json({ viaje: viaje.aVistaPublica() });
+    }),
+  );
+
+  router.post(
     '/:id/finalizar',
     limitadorViajes,
     soloChofer,
@@ -126,13 +159,13 @@ export function createViajesRouter({
   router.post(
     '/:id/cancelar',
     limitadorViajes,
-    soloPasajero,
+    pasajeroOChofer,
     asyncHandler(async (req, res) => {
       const viajeId = validarIdentificador(req.params.id);
       const { motivo } = validarCuerpo(esquemaCancelarViaje, req.body);
       const viaje = await cancelarViaje({
         viajeId,
-        pasajeroId: req.autenticacion.usuarioId,
+        actor: req.autenticacion,
         motivo,
       });
 

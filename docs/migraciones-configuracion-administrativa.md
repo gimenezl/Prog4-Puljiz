@@ -328,13 +328,19 @@ pnpm verificar
 Archivos: `tests/integration/postgres/configuracion-administrativa.test.js` y
 `tests/integration/postgres/cotizaciones.test.js`.
 
-### Resultados del 2026-11-20
+### Resultados vigentes
+
+> Las cifras del 2026-11-20 (207/207 y 25/25) son el snapshot de esta entrega;
+> los resultados actuales son los de la tabla siguiente. Detalle en
+> `docs/rf09-rf07-rf22-rf08-rf10-requerimientos-y-cambios.md` §3.4.
 
 | Comando | Resultado |
 | --- | --- |
-| `pnpm test` | 207/207 pruebas; 3 suites PostgreSQL omitidas sin `TEST_DATABASE_URL`. |
-| `pnpm test:integration:db` | 25/25 pruebas (22 de esquema y concurrencia + 3 de cotizaciones). |
-| `pnpm verificar` | 15 casos OK, 0 fallas, 3 omitidos. |
+| `pnpm test:unit` | 189 tests, 189 pass, 0 fail |
+| `pnpm test:integration` | 58 tests, 58 pass, 0 fail; 4 suites PG omitidas aquí |
+| `pnpm test:db:up` → `pnpm test:integration:db` → `pnpm test:db:down` | 48 tests PostgreSQL reales, 48 pass, 0 fail, 0 skipped |
+| `pnpm verificar` | 15 casos OK, 0 fallas, 3 omitidos |
+| `pnpm test:db:up` → `pnpm verificar:postgres` | 16 OK, 0 fallas, 2 omitidos |
 
 La suite de integración se ejecutó también sobre una copia temporal de
 `origin/main` (`3c8591b`) con los mismos archivos de esta entrega, sin

@@ -6,7 +6,7 @@ pueden reintentarse por un cliente, por un proxy o por la red:
 | Operación | Endpoint | Efecto | Alcance de la clave |
 |---|---|---|---|
 | Confirmar/crear un viaje | `POST /viajes` | Crea un viaje y fija su precio | `viaje:crear:<pasajeroId>` |
-| Finalizar y cobrar un viaje | `POST /viajes/:id/finalizar` | Finaliza el viaje, libera al chofer y registra un cobro simulado | `viaje:finalizar:<choferId>` |
+| Finalizar y cobrar un viaje | `POST /viajes/:id/finalizar` | Finaliza un viaje **`EN_CURSO`**, libera al chofer y registra un cobro simulado | `viaje:finalizar:<choferId>` |
 
 ## 1. Contrato del cliente
 
@@ -124,7 +124,8 @@ La finalización es una sola operación atómica:
 1. se bloquea la fila del viaje con `SELECT ... FOR UPDATE`;
 2. se busca la clave después del bloqueo, para que un reintento simultáneo vea
    la respuesta ya confirmada;
-3. se valida que el chofer sea el asignado y que el viaje esté `ASIGNADO`;
+3. se valida que el chofer sea el asignado y que el viaje esté `EN_CURSO`
+   (`"Solo un viaje en curso puede finalizarse."`);
 4. se crea el cobro `PENDIENTE`;
 5. se ejecuta el simulador determinista;
 6. se confirma el cobro como `COBRADO`;
@@ -146,9 +147,12 @@ El cobro tiene dos defensas independientes:
 2. **Clave natural `viaje_id` UNIQUE:** la tabla `cobros_simulados` no admite
    más de un cobro por viaje, aunque dos operaciones usen claves distintas.
 
-Además, la transición del viaje solo permite finalizar desde `ASIGNADO`. Si dos
-peticiones con claves distintas compiten, la primera finaliza y la segunda
-recibe `409 TRANSICION_INVALIDA`; la base termina con un solo cobro.
+Además, la transición del viaje solo permite finalizar desde `EN_CURSO`: hay que
+pasar por `POST /viajes/:id/en-camino` y `POST /viajes/:id/iniciar` antes de
+finalizar. Si dos peticiones con claves distintas compiten, la primera finaliza
+y la segunda recibe `409 TRANSICION_INVALIDA`; la base termina con un solo cobro.
+Un chofer no puede cancelar desde `EN_CURSO` (R10-04), así que no hay una rama
+de cancelación que gane contra la finalización.
 
 ## 6. Concurrencia
 

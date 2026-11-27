@@ -11,9 +11,11 @@ rutas disponibles y ejemplos de `curl`.
 - **Herramientas de los ejemplos:** `curl` y `jq`.
 
 > Esta guía cubre las funcionalidades implementadas, incluidas la configuración
-> administrativa y el flujo cotizar → confirmar (rama E2). Las rutas de tarea
-> pesada del Bloque 7 todavía no existen. `POST /viajes` se conserva como ruta
-> legacy/provisional: para precio dinámico usá `/cotizaciones`.
+> administrativa, el flujo cotizar → confirmar (rama E2) y las transiciones
+> `aceptar`/`en-camino`/`iniciar`/`finalizar` con cancelación actor-aware (RF-09 y
+> RF-10). RF-07 (ofertas) y RF-22 (sin candidatos) siguen pendientes por D4; las
+> rutas de tarea pesada del Bloque 7 tampoco existen. `POST /viajes` se conserva
+> como ruta legacy/provisional: para precio dinámico usá `/cotizaciones`.
 
 ---
 
@@ -105,26 +107,32 @@ pnpm dev
 
 Se ejecutan en el host, no dentro del contenedor:
 
+Orden ejecutado y resultados reales:
+
 ```bash
 pnpm install
 
-# Suite principal: 207 tests, con 3 suites PostgreSQL omitidas sin TEST_DATABASE_URL
-pnpm test
+pnpm format:check          # OK
+pnpm lint                  # OK
+pnpm test:unit             # 189 tests, 189 pass, 0 fail
+pnpm test:integration      # 58 tests, 58 pass, 0 fail; 4 suites PG omitidas aquí
 
-# Tests de integración y arquitectura (adaptadores falsos)
-pnpm test:integration
+pnpm test:db:up             # levanta compose.test.yaml y migra la base de test
+pnpm test:integration:db    # 48 tests PostgreSQL reales: 48 pass, 0 fail, 0 skipped
+pnpm test:db:down           # baja la base de test
 
-# PostgreSQL real efímero: levanta, migra, prueba y baja solo (25 tests)
-pnpm test:integration:db
+pnpm verificar             # 15 OK, 0 fail, 3 omitidos (PM-10, PM-17, PM-18)
 
-# Verificación local de requerimientos: 15 OK, 0 fallas, 3 omitidos
-pnpm verificar
-
-# Calidad
-pnpm lint
-pnpm format:check
-pnpm audit --prod
+pnpm test:db:up             # requerido por verificar:postgres
+pnpm verificar:postgres     # 16 OK, 0 fail, 2 omitidos (PM-17, PM-18)
+pnpm test:db:down
 ```
+
+Las 4 suites omitidas en `pnpm test:integration` son las que ejecuta
+`pnpm test:integration:db`; incluyen 50 aceptaciones concurrentes, las carreras
+nuevas y motivo 500/501 (`tests/integration/postgres/postgres.test.js:634`).
+`TEST_DATABASE_URL` solo sirve para apuntar a una base externa; no fue necesaria
+para esta ejecución con Docker.
 
 Si querés conservar la base efífera para inspeccionarla:
 `KEEP_TEST_DB=1 pnpm test:integration:db`. Para usarla manualmente,
@@ -150,10 +158,12 @@ Si querés conservar la base efífera para inspeccionarla:
 | `POST` | `/viajes` | `PASAJERO` | `{ origen:{lat,lng}, destino:{lat,lng} }` + header `Idempotency-Key`. Ruta **legacy**: tarifa provisional, sin cotización ni multiplicador. |
 | `GET` | `/viajes/disponibles` | `CHOFER` habilitado y disponible | Lista viajes `SOLICITADO`. |
 | `GET` | `/viajes/:id` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` | Detalle del viaje. |
-| `POST` | `/viajes/:id/aceptar` | `CHOFER` habilitado y disponible | Sin cuerpo. |
-| `POST` | `/viajes/:id/finalizar` | Chofer asignado | Sin cuerpo + header `Idempotency-Key`. |
+| `POST` | `/viajes/:id/aceptar` | `CHOFER` habilitado y disponible | Sin cuerpo; `SOLICITADO → ASIGNADO`. |
+| `POST` | `/viajes/:id/en-camino` | Chofer asignado | Sin cuerpo; `ASIGNADO → CHOFER_EN_CAMINO`. |
+| `POST` | `/viajes/:id/iniciar` | Chofer asignado | Sin cuerpo; `CHOFER_EN_CAMINO → EN_CURSO`, fija `iniciadoEn`. |
+| `POST` | `/viajes/:id/finalizar` | Chofer asignado | Sin cuerpo + header `Idempotency-Key`; solo desde `EN_CURSO`. |
 | `GET` | `/viajes/:id/cobro` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` | Cobro simulado del viaje. |
-| `POST` | `/viajes/:id/cancelar` | `PASAJERO` dueño | `{ motivo }`. |
+| `POST` | `/viajes/:id/cancelar` | Pasajero dueño o chofer asignado | `{ motivo }` (obligatorio, no vacío, ≤500). Pasajero: `SOLICITADO`/`ASIGNADO`/`CHOFER_EN_CAMINO`; chofer: `ASIGNADO`/`CHOFER_EN_CAMINO`. |
 | `POST` | `/cotizaciones` | `PASAJERO` | `{ origen:{lat,lng}, destino:{lat,lng} }`. Calcula precio, multiplicador y trazabilidad. |
 | `GET` | `/cotizaciones` | `PASAJERO` | Lista solo las cotizaciones propias, con estado efectivo. |
 | `GET` | `/cotizaciones/:id` | Dueño, `OPERADOR_SOPORTE` o `ADMINISTRADOR` | Detalle de la cotización; `VENCIDA` si pasó `venceEn`. |
@@ -176,10 +186,10 @@ acceso exclusivo del administrador y del pasajero respectivamente; el
 `OPERADOR_SOPORTE` **no** puede leer `/admin/configuracion/**`.
 
 El registro y las operaciones costosas tienen rate limit propio. El contador
-«de viajes» es compartido por `POST /viajes`, aceptar, finalizar, cancelar,
-`POST /cotizaciones`, confirmar y las escrituras de configuración. Las respuestas
-incluyen `RateLimit-Limit`, `RateLimit-Remaining` y `RateLimit-Reset`; al superar
-el límite, `429` agrega `Retry-After`.
+«de viajes» es compartido por `POST /viajes`, aceptar, `en-camino`, `iniciar`,
+finalizar, cancelar, `POST /cotizaciones`, confirmar y las escrituras de
+configuración. Las respuestas incluyen `RateLimit-Limit`, `RateLimit-Remaining`
+y `RateLimit-Reset`; al superar el límite, `429` agrega `Retry-After`.
 
 ---
 
@@ -278,6 +288,7 @@ Ejemplo de respuesta:
     "estado": "SOLICITADO",
     "solicitadoEn": "2026-11-11T14:48:11.155Z",
     "asignadoEn": null,
+    "iniciadoEn": null,
     "cerradoEn": null,
     "canceladoPorId": null,
     "motivoCancelacion": null
@@ -327,11 +338,18 @@ curl -s "$BASE/choferes/yo" \
 
 > Si el chofer ya tiene un viaje activo, `aceptar` devuelve `409 CHOFER_OCUPADO`.
 > En ese caso usá `chofer2@prog4.test` o cancelá el viaje activo del chofer.
+>
+> El pasajero dueño también puede cancelar desde `CHOFER_EN_CAMINO`. El chofer
+> asignado puede cancelar desde `ASIGNADO` o `CHOFER_EN_CAMINO` con la misma
+> ruta; desde `EN_CURSO` recibe `409` (R10-04). Un chofer ajeno, un pasajero no
+> dueño o soporte reciben `403`. `motivo` es obligatorio, no vacío y de hasta
+> 500 caracteres.
 
 ### 6.5 Finalizar un viaje y consultar el cobro
 
-Se crea un viaje nuevo, se acepta y se finaliza. La finalización exige una
-`Idempotency-Key`; el replay devuelve la misma respuesta y no cobra dos veces.
+Se crea un viaje nuevo, se acepta, se marca `en-camino`, se inicia y por último
+se finaliza. La finalización exige una `Idempotency-Key`; el replay devuelve la
+misma respuesta y no cobra dos veces.
 
 ```bash
 CLAVE_VIAJE="demo-cobro-$(date +%s)"
@@ -347,9 +365,17 @@ VIAJE_ID=$(echo "$VIAJE_JSON" | jq -r '.viaje.id')
 curl -s -X POST "$BASE/viajes/$VIAJE_ID/aceptar" \
   -H "authorization: Bearer $TOKEN_CHOFER" | jq
 
+# ASIGNADO → CHOFER_EN_CAMINO
+curl -s -X POST "$BASE/viajes/$VIAJE_ID/en-camino" \
+  -H "authorization: Bearer $TOKEN_CHOFER" | jq
+
+# CHOFER_EN_CAMINO → EN_CURSO (fija iniciadoEn)
+curl -s -X POST "$BASE/viajes/$VIAJE_ID/iniciar" \
+  -H "authorization: Bearer $TOKEN_CHOFER" | jq
+
 CLAVE_FINAL="final-$(date +%s)"
 
-# Finalizar y cobrar
+# Finalizar y cobrar (solo desde EN_CURSO)
 curl -s -i -X POST "$BASE/viajes/$VIAJE_ID/finalizar" \
   -H "authorization: Bearer $TOKEN_CHOFER" \
   -H "Idempotency-Key: $CLAVE_FINAL" | sed -n '1,20p'
@@ -366,7 +392,10 @@ curl -s "$BASE/viajes/$VIAJE_ID/cobro" \
 
 Esperado: el viaje queda `FINALIZADO`, el cobro queda `COBRADO` con referencia
 `SIM-<viajeId>`, el chofer vuelve a `DISPONIBLE` y el reintento devuelve
-`Idempotency-Replayed: true`.
+`Idempotency-Replayed: true`. Si se intenta finalizar antes de `iniciar`, la
+respuesta es `409 TRANSICION_INVALIDA` con
+`"Solo un viaje en curso puede finalizarse."` (desde `SOLICITADO` es `403`,
+D27).
 
 ### 6.6 Usuarios y autorización por recurso
 
@@ -538,7 +567,10 @@ echo "$VIAJE_JSON" | jq
     "multiplicadorFijado": "1.0000",
     "choferId": null,
     "estado": "SOLICITADO",
-    "solicitadoEn": "2026-11-20T18:31:10.000Z"
+    "solicitadoEn": "2026-11-20T18:31:10.000Z",
+    "asignadoEn": null,
+    "iniciadoEn": null,
+    "cerradoEn": null
   }
 }
 ```
@@ -574,10 +606,12 @@ curl -s "$BASE/cotizaciones" \
 | Crear viaje nuevo (`POST /viajes`) | `201` |
 | Cotizar | `201`; `422 FUERA_DE_COBERTURA` si el origen no está en una zona activa |
 | Confirmar cotización | `201`; `200` + `Idempotency-Replayed: true` en el replay |
-| Aceptar viaje | `200` |
-| Finalizar y cobrar | `200` |
+| Aceptar viaje | `200`; `409` si el viaje ya no está `SOLICITADO` o el chofer está ocupado |
+| Marcar en camino | `200`; `409` si el origen no es `ASIGNADO` |
+| Iniciar viaje | `200`; `409` si el origen no es `CHOFER_EN_CAMINO` |
+| Finalizar y cobrar | `200`; `409` si el origen no es `EN_CURSO`; `403` si el chofer no es el asignado |
 | Consultar cobro | `200`; `404` si todavía no existe |
-| Cancelar viaje | `200` |
+| Cancelar viaje | `200`; `400` sin `motivo`; `403` por rol o por recurso |
 | Sin token | `401` |
 | Recurso ajeno o configuración sin rol administrador | `403` |
 | Recurso inexistente | `404` |
