@@ -21,6 +21,12 @@ function respuestaReutilizada(registro, huella) {
  * El precio y el multiplicador se copian de la cotización; nunca se recalculan.
  * El estado se cambia con un UPDATE condicional y la clave de idempotencia se
  * registra en la misma transacción que el viaje.
+ *
+ * La fila de la cotización se bloquea ANTES de buscar la clave. Así, varias
+ * confirmaciones simultáneas se ejecutan de a una: la que llega después ve la
+ * clave y el estado que dejó la primera ya confirmados, y responde la misma
+ * respuesta (misma clave) o COTIZACION_YA_CONFIRMADA (otra clave), nunca un
+ * error ambiguo.
  */
 export function crearConfirmarCotizacion({
   repositorioCotizaciones,
@@ -45,6 +51,11 @@ export function crearConfirmarCotizacion({
 
     try {
       return await unidadDeTrabajo.ejecutar(async (tx) => {
+        const cotizacion = await repositorioCotizaciones.buscarPorIdParaActualizar(
+          cotizacionId,
+          tx,
+        );
+
         const existente = await repositorioClavesIdempotencia.buscar(
           alcance,
           claveIdempotencia,
@@ -58,8 +69,6 @@ export function crearConfirmarCotizacion({
 
           await repositorioClavesIdempotencia.eliminar(alcance, claveIdempotencia, tx);
         }
-
-        const cotizacion = await repositorioCotizaciones.buscarPorId(cotizacionId, tx);
 
         if (!cotizacion || cotizacion.pasajeroId !== pasajeroId) {
           throw new ErrorDeDominio('NO_ENCONTRADO', 'La cotización no existe.');

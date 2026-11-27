@@ -135,31 +135,39 @@ devuelve **503** con un mensaje claro. El resto de la API no se ve afectado.
   Node, para no perder precisión.
 - Fechas en ISO-8601 con zona horaria (UTC).
 
-## 5. Tecnología propuesta para Python
+## 5. Tecnología de la parte Python
 
-Propuesta a confirmar por quien lo implemente:
+Elegida al implementar (PR #12 y #13), versiones fijadas en `reportes/requirements.txt`:
 
 - Python 3.12 o posterior.
-- **FastAPI** para la API, con validación de entrada y salida con Pydantic.
+- **Django 5.2** con **Django REST Framework 3.16** para la API. La credencial de
+  servicio se aplica de forma global en `REST_FRAMEWORK` (`settings.py`), así todo
+  endpoint nuevo nace protegido; solo `/health` la desactiva.
+- **SQLite** como base propia, a través del ORM de Django (modelo `Reporte` y sus
+  migraciones). Python nunca accede a la base de Node.
 - **httpx** como cliente HTTP hacia Node, con tiempo máximo de espera.
-- **SQLite** con el módulo `sqlite3` de la biblioteca estándar.
-- **pytest** para los tests.
+- **pytest** con **pytest-django** para los tests.
 
-Estructura sugerida, en una carpeta propia del repositorio:
+Estructura actual, en una carpeta propia del repositorio:
 
 ```text
 reportes/
+├── manage.py                 # comandos de Django (runserver, migrate)
+├── servicio/                 # proyecto Django: settings.py, urls.py
+├── reportes_api/             # app: vistas, modelo Reporte, credencial de servicio
+│   ├── autenticacion.py
+│   ├── models.py
+│   ├── views.py
+│   └── migrations/
 ├── app/
-│   ├── main.py          # API FastAPI
-│   ├── indicadores.py   # cálculo puro de los indicadores
-│   ├── cliente_node.py  # llamadas HTTP a Node
-│   └── almacen.py       # lectura y escritura en SQLite
+│   └── indicadores.py        # cálculo puro de los indicadores
 ├── tests/
-├── .env.example
-├── requirements.txt
-├── Dockerfile
-└── README.md
+├── pytest.ini
+└── requirements.txt
 ```
+
+Falta agregar: el cliente HTTP hacia Node, los endpoints de reportes, el
+`Dockerfile`, el `.env.example` del servicio y su README.
 
 ## 6. Qué tiene que existir antes en Node.js
 

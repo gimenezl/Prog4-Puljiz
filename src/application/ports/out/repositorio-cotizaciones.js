@@ -4,6 +4,8 @@
  * Contrato:
  *   crear(cotizacion, ejecutor?): Promise<Cotizacion>
  *   buscarPorId(id, ejecutor?): Promise<Cotizacion | null>
+ *   buscarPorIdParaActualizar(id, ejecutor?): Promise<Cotizacion | null>
+ *     (bloquea la fila: serializa las confirmaciones simultáneas)
  *   ultimaPorZona(zonaId, ejecutor?): Promise<Cotizacion | null>
  *   listarPorPasajero(pasajeroId, ejecutor?): Promise<Cotizacion[]>
  *   marcarEstado(id, estado, ahora, ejecutor?): Promise<boolean>

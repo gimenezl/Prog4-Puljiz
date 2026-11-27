@@ -274,4 +274,150 @@ describirPostgres('cotizaciones inmutables y precio fijado (RF-23 + ADR-0005)', 
     const { rows } = await baseDeDatos.query('SELECT COUNT(*)::int AS total FROM viajes');
     assert.equal(rows[0].total, 0);
   });
+
+  // --- RF-19: el precio que vio el pasajero es el que paga ---------------
+
+  /** Simula demanda alta en la zona: viajes SOLICITADO y ningún chofer. */
+  async function subirDemanda(cantidad) {
+    await baseDeDatos.query(
+      `INSERT INTO viajes (
+         id, pasajero_id, origen_lat, origen_lng, destino_lat, destino_lng,
+         distancia_estimada_m, precio_fijado_centavos, estado, solicitado_en
+       )
+       SELECT gen_random_uuid(), $1, $2, $3, $4, $5, 1000, 150000, 'SOLICITADO', $6
+         FROM generate_series(1, $7)`,
+      [PASAJERO_ID, ORIGEN.lat, ORIGEN.lng, DESTINO.lat, DESTINO.lng, AHORA, cantidad],
+    );
+  }
+
+  /** Recálculo del multiplicador: otra cotización de la misma zona. */
+  const recalcular = () =>
+    kit.cotizar({ pasajeroId: PASAJERO_ID, origen: ORIGEN, destino: DESTINO });
+
+  async function viajeDe(cotizacionId) {
+    const { rows } = await baseDeDatos.query(
+      `SELECT precio_fijado_centavos, multiplicador_fijado FROM viajes WHERE cotizacion_id = $1`,
+      [cotizacionId],
+    );
+    return rows;
+  }
+
+  for (const orden of ['recálculo antes de confirmar', 'confirmación antes de recalcular']) {
+    test(`RF-19, ${orden}: el viaje queda con el precio visto`, async () => {
+      await prepararConfiguracion();
+      const vista = await recalcular();
+      assert.equal(vista.multiplicador, '1.00');
+
+      await subirDemanda(5);
+      const confirmar = () =>
+        kit.confirmar({
+          cotizacionId: vista.id,
+          pasajeroId: PASAJERO_ID,
+          claveIdempotencia: `rf19-${orden}`,
+        });
+
+      let nueva;
+      if (orden === 'recálculo antes de confirmar') {
+        nueva = await recalcular();
+        await confirmar();
+      } else {
+        await confirmar();
+        nueva = await recalcular();
+      }
+
+      // La demanda subió: el recálculo da el multiplicador máximo de la regla...
+      assert.equal(nueva.multiplicador, '2.00');
+      assert.ok(nueva.precioCentavos > vista.precioCentavos);
+
+      // ...pero el viaje confirmado conserva exactamente lo que vio el pasajero.
+      const viajes = await viajeDe(vista.id);
+      assert.equal(viajes.length, 1);
+      assert.equal(viajes[0].precio_fijado_centavos, vista.precioCentavos);
+      assert.equal(Number(viajes[0].multiplicador_fijado), Number(vista.multiplicador));
+    });
+  }
+
+  test('RF-19, a la vez: recálculos, una regla nueva y la confirmación no cambian el precio', async () => {
+    await prepararConfiguracion();
+    const reglaNueva = await kit.crearRegla({
+      actor: ADMIN,
+      umbralInferior: '0.5',
+      umbralSuperior: '3',
+      multiplicadorMinimo: '1.5',
+      multiplicadorMaximo: '2.5',
+      escalaMultiplicador: 2,
+    });
+
+    for (let ronda = 1; ronda <= 5; ronda += 1) {
+      const vista = await recalcular();
+      await subirDemanda(2);
+
+      const operaciones = [
+        kit.confirmar({
+          cotizacionId: vista.id,
+          pasajeroId: PASAJERO_ID,
+          claveIdempotencia: `rf19-simultaneo-${ronda}`,
+        }),
+        recalcular(),
+        recalcular(),
+      ];
+      if (ronda === 3)
+        operaciones.push(kit.publicarRegla({ actor: ADMIN, reglaId: reglaNueva.id }));
+
+      const resultados = await Promise.allSettled(operaciones);
+      assert.deepEqual(
+        resultados.filter((r) => r.status === 'rejected').map((r) => r.reason.message),
+        [],
+        `ronda ${ronda}`,
+      );
+
+      const viajes = await viajeDe(vista.id);
+      assert.equal(viajes.length, 1, `ronda ${ronda}`);
+      assert.equal(viajes[0].precio_fijado_centavos, vista.precioCentavos, `ronda ${ronda}`);
+      assert.equal(Number(viajes[0].multiplicador_fijado), Number(vista.multiplicador));
+    }
+  });
+
+  test('confirmaciones simultáneas de la misma cotización generan un solo viaje', async () => {
+    await prepararConfiguracion();
+    const vista = await recalcular();
+
+    const resultados = await Promise.allSettled(
+      Array.from({ length: 10 }, (_, i) =>
+        kit.confirmar({
+          cotizacionId: vista.id,
+          pasajeroId: PASAJERO_ID,
+          claveIdempotencia: `doble-${i}`,
+        }),
+      ),
+    );
+
+    const ganadoras = resultados.filter((r) => r.status === 'fulfilled');
+    const perdedoras = resultados.filter((r) => r.status === 'rejected');
+    assert.equal(ganadoras.length, 1);
+    assert.deepEqual(
+      [...new Set(perdedoras.map((r) => r.reason.codigo))],
+      ['COTIZACION_YA_CONFIRMADA'],
+    );
+    assert.equal((await viajeDe(vista.id)).length, 1);
+  });
+
+  test('la misma clave enviada a la vez devuelve el mismo viaje a todos', async () => {
+    await prepararConfiguracion();
+    const vista = await recalcular();
+
+    const resultados = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        kit.confirmar({
+          cotizacionId: vista.id,
+          pasajeroId: PASAJERO_ID,
+          claveIdempotencia: 'misma-clave-simultanea',
+        }),
+      ),
+    );
+
+    assert.equal(new Set(resultados.map((r) => r.viaje.id)).size, 1);
+    assert.equal(resultados.filter((r) => !r.reutilizada).length, 1);
+    assert.equal((await viajeDe(vista.id)).length, 1);
+  });
 });

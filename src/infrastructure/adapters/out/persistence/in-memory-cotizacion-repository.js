@@ -19,6 +19,11 @@ export class InMemoryCotizacionRepository {
     return this.#porId.get(id) ?? null;
   }
 
+  // La unidad de trabajo en memoria ya serializa las operaciones.
+  async buscarPorIdParaActualizar(id, _ejecutor) {
+    return this.#porId.get(id) ?? null;
+  }
+
   async ultimaPorZona(zonaId, _ejecutor) {
     return (
       [...this.#porId.values()]

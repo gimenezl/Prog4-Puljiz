@@ -68,6 +68,16 @@ export class PostgresCotizacionRepository {
     return rows[0] ? mapearCotizacion(rows[0]) : null;
   }
 
+  /** Bloquea la fila hasta el fin de la transacción (SELECT ... FOR UPDATE). */
+  async buscarPorIdParaActualizar(id, ejecutor) {
+    const { rows } = await this.#ejecutor(ejecutor).query(
+      `SELECT ${CAMPOS} FROM cotizaciones WHERE id = $1 FOR UPDATE`,
+      [id],
+    );
+
+    return rows[0] ? mapearCotizacion(rows[0]) : null;
+  }
+
   async ultimaPorZona(zonaId, ejecutor) {
     const { rows } = await this.#ejecutor(ejecutor).query(
       `SELECT ${CAMPOS}
