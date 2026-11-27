@@ -5,8 +5,8 @@ import { PuntoGeografico } from '../../../../domain/value-objects/punto-geografi
 const CAMPOS = `
   id, pasajero_id, origen_lat, origen_lng, destino_lat, destino_lng,
   distancia_estimada_m, precio_fijado_centavos, cotizacion_id, multiplicador_fijado,
-  chofer_id, estado, solicitado_en, asignado_en, cerrado_en, cancelado_por_id,
-  motivo_cancelacion
+  chofer_id, estado, solicitado_en, asignado_en, iniciado_en, cerrado_en,
+  cancelado_por_id, motivo_cancelacion
 `;
 
 /**
@@ -28,9 +28,9 @@ export class PostgresViajeRepository {
          id, pasajero_id, origen_lat, origen_lng, destino_lat, destino_lng,
          distancia_estimada_m, precio_fijado_centavos, cotizacion_id,
          multiplicador_fijado, chofer_id, estado, solicitado_en, asignado_en,
-         cerrado_en, cancelado_por_id, motivo_cancelacion
+         iniciado_en, cerrado_en, cancelado_por_id, motivo_cancelacion
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
        )`,
       [
         viaje.id,
@@ -47,6 +47,7 @@ export class PostgresViajeRepository {
         viaje.estado,
         viaje.solicitadoEn,
         viaje.asignadoEn,
+        viaje.iniciadoEn,
         viaje.cerradoEn,
         viaje.canceladoPorId,
         viaje.motivoCancelacion,
@@ -78,15 +79,17 @@ export class PostgresViajeRepository {
           SET chofer_id = $2,
               estado = $3,
               asignado_en = $4,
-              cerrado_en = $5,
-              cancelado_por_id = $6,
-              motivo_cancelacion = $7
+              iniciado_en = $5,
+              cerrado_en = $6,
+              cancelado_por_id = $7,
+              motivo_cancelacion = $8
         WHERE id = $1`,
       [
         viaje.id,
         viaje.choferId,
         viaje.estado,
         viaje.asignadoEn,
+        viaje.iniciadoEn,
         viaje.cerradoEn,
         viaje.canceladoPorId,
         viaje.motivoCancelacion,
@@ -180,6 +183,7 @@ function mapearViaje(fila) {
     estado: fila.estado,
     solicitadoEn: fila.solicitado_en,
     asignadoEn: fila.asignado_en,
+    iniciadoEn: fila.iniciado_en,
     cerradoEn: fila.cerrado_en,
     canceladoPorId: fila.cancelado_por_id,
     motivoCancelacion: fila.motivo_cancelacion,

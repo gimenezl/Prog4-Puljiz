@@ -167,16 +167,22 @@ cuentan como choferes disponibles los habilitados, sin viaje activo, con
 - Node.js 22 y pnpm 12.
 - Base de prueba descartable definida en `compose.test.yaml`.
 
-### 4.2 Resultados del 2026-11-20
+### 4.2 Resultados vigentes
+
+> Las cifras del 2026-11-20 (207/207 y 25/25) quedaron como snapshot; los
+> resultados actuales son los de la tabla siguiente. Detalle en
+> `docs/rf09-rf07-rf22-rf08-rf10-requerimientos-y-cambios.md` §3.4.
 
 | Comando | Resultado |
 | --- | --- |
 | `pnpm format` | Aplica formato a todo el árbol. |
 | `pnpm format:check` | OK |
 | `pnpm lint` | OK |
-| `pnpm test` | 207/207 pruebas (3 suites PostgreSQL omitidas sin `TEST_DATABASE_URL`). |
-| `pnpm test:integration:db` | 25/25 pruebas, incluidas las 3 nuevas de cotizaciones. |
-| `pnpm verificar` | 15 OK, 0 fallas, 3 omitidos. |
+| `pnpm test:unit` | 189 tests, 189 pass, 0 fail |
+| `pnpm test:integration` | 58 tests, 58 pass, 0 fail; 4 suites PG omitidas aquí |
+| `pnpm test:db:up` → `pnpm test:integration:db` → `pnpm test:db:down` | 48 tests PostgreSQL reales, 48 pass, 0 fail, 0 skipped |
+| `pnpm verificar` | 15 OK, 0 fallas, 3 omitidos |
+| `pnpm test:db:up` → `pnpm verificar:postgres` | 16 OK, 0 fallas, 2 omitidos |
 
 Los casos límite cubiertos son demanda baja, demanda en los umbrales, demanda
 alta, `0/0`, demanda sin choferes, ventanas vencidas y cotización vencida antes

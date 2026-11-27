@@ -123,11 +123,11 @@ async function habilitarChofer(urlBase, admin, chofer) {
   assert.equal(ubicacion.respuesta.status, 200);
 }
 
-async function crearViajeAsignado(urlBase, pasajero, chofer) {
+async function crearViajeAsignado(urlBase, pasajero, chofer, clave = 'autorizacion-viaje') {
   const creacion = await llamar(`${urlBase}/viajes`, {
     method: 'POST',
     token: pasajero.token,
-    headers: { 'Idempotency-Key': 'autorizacion-viaje' },
+    headers: { 'Idempotency-Key': clave },
     body: { origen: ORIGEN, destino: DESTINO },
   });
   assert.equal(creacion.respuesta.status, 201);
@@ -139,6 +139,23 @@ async function crearViajeAsignado(urlBase, pasajero, chofer) {
   assert.equal(aceptacion.respuesta.status, 200);
 
   return creacion.cuerpo.viaje;
+}
+
+async function ponerViajeEnCurso(urlBase, pasajero, chofer, clave = 'autorizacion-en-curso') {
+  const viaje = await crearViajeAsignado(urlBase, pasajero, chofer, clave);
+  const enCamino = await llamar(`${urlBase}/viajes/${viaje.id}/en-camino`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  afirmarEstado(enCamino, 200, 'marcar en camino al preparar el escenario');
+
+  const iniciado = await llamar(`${urlBase}/viajes/${viaje.id}/iniciar`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  afirmarEstado(iniciado, 200, 'iniciar al preparar el escenario');
+
+  return iniciado.cuerpo.viaje;
 }
 
 async function prepararEscenario(t) {
@@ -236,28 +253,44 @@ test('autorización por recurso de un viaje con cuatro roles', async (t) => {
   assert.equal(otroChoferAcepta.cuerpo.error.codigo, 'VIAJE_NO_DISPONIBLE');
 
   const cancelacionesProhibidas = [
-    ['pasajero ajeno', otroPasajero, 403],
-    ['chofer asignado', chofer, 403],
-    ['administrador', admin, 403],
-    ['operador de soporte', soporte, 403],
+    ['pasajero ajeno', otroPasajero],
+    ['chofer ajeno', otroChofer],
+    ['administrador', admin],
+    ['operador de soporte', soporte],
   ];
 
-  for (const [descripcion, sesion, esperado] of cancelacionesProhibidas) {
+  for (const [descripcion, sesion] of cancelacionesProhibidas) {
     const resultado = await llamar(`${urlViaje}/cancelar`, {
       method: 'POST',
       token: sesion.token,
       body: { motivo: 'Intento sin permiso' },
     });
-    afirmarEstado(resultado, esperado, `cancelar como ${descripcion}`);
+    afirmarEstado(resultado, 403, `cancelar como ${descripcion}`);
     assert.equal(resultado.cuerpo.error.codigo, 'NO_AUTORIZADO');
   }
 
-  const cancelacionPropia = await llamar(`${urlViaje}/cancelar`, {
+  const cancelacionChofer = await llamar(`${urlViaje}/cancelar`, {
+    method: 'POST',
+    token: chofer.token,
+    body: { motivo: 'No puedo llegar' },
+  });
+  afirmarEstado(cancelacionChofer, 200, 'cancelar como chofer asignado');
+  assert.equal(cancelacionChofer.cuerpo.viaje.estado, 'CANCELADO_POR_CHOFER');
+  assert.equal(cancelacionChofer.cuerpo.viaje.canceladoPorId, chofer.usuario.id);
+
+  const segundoViaje = await crearViajeAsignado(
+    urlBase,
+    pasajero,
+    chofer,
+    'autorizacion-viaje-pasajero',
+  );
+  const cancelacionPropia = await llamar(`${urlBase}/viajes/${segundoViaje.id}/cancelar`, {
     method: 'POST',
     token: pasajero.token,
     body: { motivo: 'Cambio de planes' },
   });
   afirmarEstado(cancelacionPropia, 200, 'cancelar como pasajero dueño');
+  assert.equal(cancelacionPropia.cuerpo.viaje.estado, 'CANCELADO_POR_PASAJERO');
 });
 
 test('autorización por recurso de una cuenta con cuatro roles', async (t) => {
@@ -351,4 +384,106 @@ test('autorización del perfil operativo del chofer con cuatro roles', async (t)
     },
   );
   afirmarEstado(habilitacionAdmin, 200, 'habilitar chofer como administrador');
+});
+
+test('en-camino e iniciar exigen el chofer asignado y rechazan a los demás roles', async (t) => {
+  const { urlBase, admin, soporte, pasajero, chofer, otroChofer } = await prepararEscenario(t);
+  const viaje = await crearViajeAsignado(urlBase, pasajero, chofer, 'matriz-en-camino');
+  const urlBaseViaje = `${urlBase}/viajes/${viaje.id}`;
+
+  const actoresProhibidos = [
+    ['pasajero dueño', pasajero],
+    ['administrador', admin],
+    ['operador de soporte', soporte],
+    ['chofer ajeno', otroChofer],
+  ];
+
+  for (const [descripcion, sesion] of actoresProhibidos) {
+    const resultado = await llamar(`${urlBaseViaje}/en-camino`, {
+      method: 'POST',
+      token: sesion.token,
+    });
+    afirmarEstado(resultado, 403, `en-camino como ${descripcion}`);
+    assert.equal(resultado.cuerpo.error.codigo, 'NO_AUTORIZADO');
+  }
+
+  const enCamino = await llamar(`${urlBaseViaje}/en-camino`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  afirmarEstado(enCamino, 200, 'en-camino como chofer asignado');
+  assert.equal(enCamino.cuerpo.viaje.estado, 'CHOFER_EN_CAMINO');
+
+  for (const [descripcion, sesion] of actoresProhibidos) {
+    const resultado = await llamar(`${urlBaseViaje}/iniciar`, {
+      method: 'POST',
+      token: sesion.token,
+    });
+    afirmarEstado(resultado, 403, `iniciar como ${descripcion}`);
+    assert.equal(resultado.cuerpo.error.codigo, 'NO_AUTORIZADO');
+  }
+
+  const iniciado = await llamar(`${urlBaseViaje}/iniciar`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  afirmarEstado(iniciado, 200, 'iniciar como chofer asignado');
+  assert.equal(iniciado.cuerpo.viaje.estado, 'EN_CURSO');
+});
+
+test('finalizar por HTTP rechaza a administrador y operador de soporte', async (t) => {
+  const { urlBase, admin, soporte, pasajero, chofer } = await prepararEscenario(t);
+  const viaje = await ponerViajeEnCurso(urlBase, pasajero, chofer, 'matriz-finalizar');
+
+  for (const [descripcion, sesion] of [
+    ['administrador', admin],
+    ['operador de soporte', soporte],
+  ]) {
+    const resultado = await llamar(`${urlBase}/viajes/${viaje.id}/finalizar`, {
+      method: 'POST',
+      token: sesion.token,
+      headers: {
+        'Idempotency-Key':
+          descripcion === 'administrador' ? 'finalizar-admin' : 'finalizar-soporte',
+      },
+    });
+    afirmarEstado(resultado, 403, `finalizar como ${descripcion}`);
+    assert.equal(resultado.cuerpo.error.codigo, 'NO_AUTORIZADO');
+  }
+
+  const finalizado = await llamar(`${urlBase}/viajes/${viaje.id}/finalizar`, {
+    method: 'POST',
+    token: chofer.token,
+    headers: { 'Idempotency-Key': 'finalizar-chofer-autorizado' },
+  });
+  afirmarEstado(finalizado, 200, 'finalizar como chofer asignado');
+  assert.equal(finalizado.cuerpo.viaje.estado, 'FINALIZADO');
+});
+
+test('el chofer asignado cancela desde CHOFER_EN_CAMINO por HTTP y queda libre', async (t) => {
+  const { urlBase, pasajero, chofer } = await prepararEscenario(t);
+  const viaje = await crearViajeAsignado(urlBase, pasajero, chofer, 'cancelar-en-camino');
+  const urlBaseViaje = `${urlBase}/viajes/${viaje.id}`;
+
+  const enCamino = await llamar(`${urlBaseViaje}/en-camino`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  afirmarEstado(enCamino, 200, 'marcar en camino antes de cancelar');
+
+  const cancelado = await llamar(`${urlBaseViaje}/cancelar`, {
+    method: 'POST',
+    token: chofer.token,
+    body: { motivo: 'Problema mecánico' },
+  });
+  afirmarEstado(cancelado, 200, 'cancelar como chofer con el viaje en camino');
+  assert.equal(cancelado.cuerpo.viaje.estado, 'CANCELADO_POR_CHOFER');
+  assert.equal(cancelado.cuerpo.viaje.canceladoPorId, chofer.usuario.id);
+  assert.equal(cancelado.cuerpo.viaje.motivoCancelacion, 'Problema mecánico');
+  assert.notEqual(cancelado.cuerpo.viaje.cerradoEn, null);
+
+  const perfil = await llamar(`${urlBase}/choferes/yo`, { token: chofer.token });
+  afirmarEstado(perfil, 200, 'perfil del chofer tras cancelar');
+  assert.equal(perfil.cuerpo.chofer.viajeActivoId, null);
+  assert.equal(perfil.cuerpo.chofer.estado, 'DISPONIBLE');
 });

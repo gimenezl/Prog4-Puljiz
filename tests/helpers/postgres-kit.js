@@ -4,6 +4,8 @@ import { crearAceptarViaje } from '../../src/application/use-cases/viajes/acepta
 import { crearCancelarViaje } from '../../src/application/use-cases/viajes/cancelar-viaje.js';
 import { crearCrearViaje } from '../../src/application/use-cases/viajes/crear-viaje.js';
 import { crearFinalizarViaje } from '../../src/application/use-cases/viajes/finalizar-viaje.js';
+import { crearIniciarViaje } from '../../src/application/use-cases/viajes/iniciar-viaje.js';
+import { crearMarcarEnCamino } from '../../src/application/use-cases/viajes/marcar-en-camino.js';
 import { crearObtenerCobro } from '../../src/application/use-cases/viajes/obtener-cobro.js';
 import { Chofer } from '../../src/domain/entities/chofer.js';
 import { UbicacionChofer } from '../../src/domain/entities/ubicacion-chofer.js';
@@ -87,6 +89,17 @@ export function crearKitPostgres({ max = 20 } = {}) {
       vigenciaUbicacionMs: VIGENCIA_UBICACION_MS,
     }),
 
+    marcarEnCamino: crearMarcarEnCamino({
+      repositorioViajes,
+      unidadDeTrabajo,
+    }),
+
+    iniciarViaje: crearIniciarViaje({
+      repositorioViajes,
+      unidadDeTrabajo,
+      reloj,
+    }),
+
     cancelarViaje: crearCancelarViaje({
       repositorioViajes,
       repositorioChoferes,
@@ -163,6 +176,26 @@ export function crearKitPostgres({ max = 20 } = {}) {
       });
 
       return { viaje, chofer: conductor, pasajero: creado.pasajero };
+    },
+
+    async crearViajeEnCamino({ chofer, pasajero, ...sobrescrituras } = {}) {
+      const asignado = await kit.crearViajeAsignado({ chofer, pasajero, ...sobrescrituras });
+      const viaje = await kit.marcarEnCamino({
+        viajeId: asignado.viaje.id,
+        choferId: asignado.chofer.usuario.id,
+      });
+
+      return { ...asignado, viaje };
+    },
+
+    async crearViajeEnCurso({ chofer, pasajero, ...sobrescrituras } = {}) {
+      const enCamino = await kit.crearViajeEnCamino({ chofer, pasajero, ...sobrescrituras });
+      const viaje = await kit.iniciarViaje({
+        viajeId: enCamino.viaje.id,
+        choferId: enCamino.chofer.usuario.id,
+      });
+
+      return { ...enCamino, viaje };
     },
 
     async limpiar() {

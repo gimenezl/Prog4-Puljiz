@@ -7,7 +7,7 @@
  * limpios en cada ejecución.
  */
 
-import { aceptarViaje, crearViaje, finalizarViaje } from './flujos.js';
+import { aceptarViaje, crearViaje, finalizarViaje, ponerEnCurso } from './flujos.js';
 import { usuario } from './contexto.js';
 import {
   afirmar,
@@ -39,6 +39,7 @@ export const casosSeguridad = [
     async ejecutar(contexto) {
       const { id, viaje } = await crearViaje(contexto);
       await aceptarViaje(contexto, id, 'chofer1');
+      await ponerEnCurso(contexto, id, 'chofer1');
       const { cobro, clave } = await finalizarViaje(contexto, id, {
         clave: claveDePrueba(contexto, 'pm10-final'),
       });

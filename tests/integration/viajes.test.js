@@ -132,6 +132,72 @@ function crearViaje(urlBase, token, { key = 'clave-http', destino = DESTINO } = 
   });
 }
 
+async function aceptarViaje(urlBase, viajeId, chofer) {
+  const respuesta = await llamar(`${urlBase}/viajes/${viajeId}/aceptar`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  assert.equal(respuesta.respuesta.status, 200, 'aceptar viaje al preparar el escenario');
+  return respuesta;
+}
+
+async function marcarEnCamino(urlBase, viajeId, chofer) {
+  const respuesta = await llamar(`${urlBase}/viajes/${viajeId}/en-camino`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  assert.equal(respuesta.respuesta.status, 200, 'marcar en camino al preparar el escenario');
+  return respuesta;
+}
+
+async function iniciar(urlBase, viajeId, chofer) {
+  const respuesta = await llamar(`${urlBase}/viajes/${viajeId}/iniciar`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  assert.equal(respuesta.respuesta.status, 200, 'iniciar al preparar el escenario');
+  return respuesta;
+}
+
+async function cancelar(urlBase, viajeId, token, motivo = 'Motivo de prueba') {
+  return llamar(`${urlBase}/viajes/${viajeId}/cancelar`, {
+    method: 'POST',
+    token,
+    body: { motivo },
+  });
+}
+
+async function crearViajeEnEstadoHTTP(urlBase, pasajero, chofer, clave, estado) {
+  const creado = await crearViaje(urlBase, pasajero.token, { key: clave });
+  assert.equal(creado.respuesta.status, 201, `crear viaje para ${estado}`);
+  const viajeId = creado.cuerpo.viaje.id;
+
+  await aceptarViaje(urlBase, viajeId, chofer);
+
+  if (estado === 'ASIGNADO') return viajeId;
+
+  if (estado === 'CANCELADO_POR_PASAJERO' || estado === 'CANCELADO_POR_CHOFER') {
+    const token = estado === 'CANCELADO_POR_PASAJERO' ? pasajero.token : chofer.token;
+    const cancelado = await cancelar(urlBase, viajeId, token);
+    assert.equal(cancelado.cuerpo.viaje.estado, estado);
+    return viajeId;
+  }
+
+  await marcarEnCamino(urlBase, viajeId, chofer);
+  if (estado === 'CHOFER_EN_CAMINO') return viajeId;
+
+  await iniciar(urlBase, viajeId, chofer);
+  if (estado === 'EN_CURSO') return viajeId;
+
+  const finalizado = await llamar(`${urlBase}/viajes/${viajeId}/finalizar`, {
+    method: 'POST',
+    token: chofer.token,
+    headers: { 'Idempotency-Key': `${clave}-final` },
+  });
+  assert.equal(finalizado.respuesta.status, 200, `finalizar viaje para ${estado}`);
+  return viajeId;
+}
+
 test('flujo completo: registro de chofer, idempotencia, aceptación y cancelación', async (t) => {
   const composicion = await crearAplicacion(t);
   const { urlBase } = composicion;
@@ -365,4 +431,208 @@ test('dos creaciones simultáneas con la misma clave devuelven el mismo viaje', 
     [200, 201],
   );
   assert.equal(a.cuerpo.viaje.id, b.cuerpo.viaje.id);
+});
+
+test('las transiciones inválidas por HTTP responden 409 TRANSICION_INVALIDA', async (t) => {
+  const composicion = await crearAplicacion(t, { VIAJES_RATE_LIMIT_MAX: '200' });
+  const { urlBase } = composicion;
+  const admin = await crearAdministrador(composicion, urlBase);
+  const pasajero = await crearCuenta(urlBase, {
+    email: 'pasajero-transiciones@example.com',
+    nombre: 'Pasajero',
+    rol: 'PASAJERO',
+  });
+  const choferes = [];
+  for (let indice = 1; indice <= 6; indice += 1) {
+    choferes.push(
+      await prepararChofer(composicion, urlBase, admin, {
+        email: `chofer-transiciones-${indice}@example.com`,
+        nombre: `Chofer ${indice}`,
+      }),
+    );
+  }
+  const [
+    choferCanceladoPasajero,
+    choferCanceladoChofer,
+    choferAsignado,
+    choferEnCamino,
+    choferEnCurso,
+    choferFinalizado,
+  ] = choferes;
+
+  const canceladoPasajero = await crearViajeEnEstadoHTTP(
+    urlBase,
+    pasajero,
+    choferCanceladoPasajero,
+    'transicion-cancelado-pasajero',
+    'CANCELADO_POR_PASAJERO',
+  );
+  const canceladoChofer = await crearViajeEnEstadoHTTP(
+    urlBase,
+    pasajero,
+    choferCanceladoChofer,
+    'transicion-cancelado-chofer',
+    'CANCELADO_POR_CHOFER',
+  );
+  const asignado = await crearViajeEnEstadoHTTP(
+    urlBase,
+    pasajero,
+    choferAsignado,
+    'transicion-asignado',
+    'ASIGNADO',
+  );
+  const enCamino = await crearViajeEnEstadoHTTP(
+    urlBase,
+    pasajero,
+    choferEnCamino,
+    'transicion-en-camino',
+    'CHOFER_EN_CAMINO',
+  );
+  const enCurso = await crearViajeEnEstadoHTTP(
+    urlBase,
+    pasajero,
+    choferEnCurso,
+    'transicion-en-curso',
+    'EN_CURSO',
+  );
+  const finalizado = await crearViajeEnEstadoHTTP(
+    urlBase,
+    pasajero,
+    choferFinalizado,
+    'transicion-finalizado',
+    'FINALIZADO',
+  );
+
+  const casos = [
+    ['en-camino desde EN_CURSO', enCurso, 'en-camino', choferEnCurso.token],
+    [
+      'en-camino desde CANCELADO_POR_PASAJERO',
+      canceladoPasajero,
+      'en-camino',
+      choferCanceladoPasajero.token,
+    ],
+    ['iniciar desde ASIGNADO', asignado, 'iniciar', choferAsignado.token],
+    ['iniciar desde EN_CURSO', enCurso, 'iniciar', choferEnCurso.token],
+    ['iniciar desde CANCELADO_POR_CHOFER', canceladoChofer, 'iniciar', choferCanceladoChofer.token],
+    ['finalizar desde ASIGNADO', asignado, 'finalizar', choferAsignado.token],
+    ['finalizar desde CHOFER_EN_CAMINO', enCamino, 'finalizar', choferEnCamino.token],
+    ['finalizar desde FINALIZADO', finalizado, 'finalizar', choferFinalizado.token],
+    ['cancelar por chofer desde EN_CURSO', enCurso, 'cancelar', choferEnCurso.token],
+    ['cancelar por pasajero desde EN_CURSO', enCurso, 'cancelar', pasajero.token],
+    ['cancelar por pasajero desde FINALIZADO', finalizado, 'cancelar', pasajero.token],
+    [
+      'cancelar por chofer desde CANCELADO_POR_CHOFER',
+      canceladoChofer,
+      'cancelar',
+      choferCanceladoChofer.token,
+    ],
+  ];
+
+  for (const [descripcion, viajeId, ruta, token] of casos) {
+    const opciones = { method: 'POST', token };
+    if (ruta === 'finalizar') {
+      opciones.headers = { 'Idempotency-Key': `invalida-${viajeId.slice(0, 8)}-${ruta}` };
+    } else if (ruta === 'cancelar') {
+      opciones.body = { motivo: 'Intento inválido' };
+    }
+
+    const resultado = await llamar(`${urlBase}/viajes/${viajeId}/${ruta}`, opciones);
+    assert.equal(
+      resultado.respuesta.status,
+      409,
+      `${descripcion}: ${JSON.stringify(resultado.cuerpo)}`,
+    );
+    assert.equal(resultado.cuerpo.error.codigo, 'TRANSICION_INVALIDA', descripcion);
+  }
+});
+
+test('en-camino sobre un viaje SOLICITADO por HTTP rechaza al chofer no asignado', async (t) => {
+  const composicion = await crearAplicacion(t);
+  const { urlBase } = composicion;
+  const admin = await crearAdministrador(composicion, urlBase);
+  const pasajero = await crearCuenta(urlBase, {
+    email: 'pasajero-solicitado@example.com',
+    nombre: 'Pasajero',
+    rol: 'PASAJERO',
+  });
+  const chofer = await prepararChofer(composicion, urlBase, admin, {
+    email: 'chofer-solicitado@example.com',
+    nombre: 'Chofer',
+  });
+
+  const creado = await crearViaje(urlBase, pasajero.token, { key: 'solicitado-sin-chofer' });
+  assert.equal(creado.respuesta.status, 201);
+
+  const resultado = await llamar(`${urlBase}/viajes/${creado.cuerpo.viaje.id}/en-camino`, {
+    method: 'POST',
+    token: chofer.token,
+  });
+  assert.equal(resultado.respuesta.status, 403);
+  assert.equal(resultado.cuerpo.error.codigo, 'NO_AUTORIZADO');
+});
+
+test('operar sobre un viaje inexistente por HTTP responde 404 NO_ENCONTRADO', async (t) => {
+  const composicion = await crearAplicacion(t, { VIAJES_RATE_LIMIT_MAX: '200' });
+  const { urlBase } = composicion;
+  const admin = await crearAdministrador(composicion, urlBase);
+  const pasajero = await crearCuenta(urlBase, {
+    email: 'pasajero-inexistente@example.com',
+    nombre: 'Pasajero',
+    rol: 'PASAJERO',
+  });
+  const chofer = await prepararChofer(composicion, urlBase, admin, {
+    email: 'chofer-inexistente@example.com',
+    nombre: 'Chofer',
+  });
+
+  const viajeId = '99999999-9999-4999-8999-999999999999';
+  const casos = [
+    ['en-camino', chofer.token],
+    ['iniciar', chofer.token],
+    ['finalizar', chofer.token],
+    ['cancelar', pasajero.token],
+  ];
+
+  for (const [ruta, token] of casos) {
+    const opciones = { method: 'POST', token };
+    if (ruta === 'finalizar') {
+      opciones.headers = { 'Idempotency-Key': `inexistente-${ruta}` };
+    } else if (ruta === 'cancelar') {
+      opciones.body = { motivo: 'Viaje inexistente' };
+    }
+
+    const resultado = await llamar(`${urlBase}/viajes/${viajeId}/${ruta}`, opciones);
+    assert.equal(resultado.respuesta.status, 404, `${ruta}: ${JSON.stringify(resultado.cuerpo)}`);
+    assert.equal(resultado.cuerpo.error.codigo, 'NO_ENCONTRADO', ruta);
+  }
+});
+
+test('cancelar por HTTP con motivo inválido responde 400 DATOS_INVALIDOS sin cambiar el viaje', async (t) => {
+  const composicion = await crearAplicacion(t, { VIAJES_RATE_LIMIT_MAX: '200' });
+  const { urlBase } = composicion;
+  const pasajero = await crearCuenta(urlBase, {
+    email: 'pasajero-motivo@example.com',
+    nombre: 'Pasajero',
+    rol: 'PASAJERO',
+  });
+
+  const creado = await crearViaje(urlBase, pasajero.token, { key: 'motivo-invalido' });
+  assert.equal(creado.respuesta.status, 201);
+  const viajeId = creado.cuerpo.viaje.id;
+  const antes = await llamar(`${urlBase}/viajes/${viajeId}`, { token: pasajero.token });
+  assert.equal(antes.respuesta.status, 200);
+
+  for (const motivo of ['', '   \t\n', 'x'.repeat(501)]) {
+    const resultado = await cancelar(urlBase, viajeId, pasajero.token, motivo);
+    assert.equal(resultado.respuesta.status, 400, JSON.stringify(resultado.cuerpo));
+    assert.equal(resultado.cuerpo.error.codigo, 'DATOS_INVALIDOS');
+  }
+
+  const despues = await llamar(`${urlBase}/viajes/${viajeId}`, { token: pasajero.token });
+  assert.equal(despues.respuesta.status, 200);
+  assert.deepEqual(despues.cuerpo.viaje, antes.cuerpo.viaje);
+
+  const cancelado = await cancelar(urlBase, viajeId, pasajero.token, '  Motivo válido  ');
+  assert.equal(cancelado.respuesta.status, 200);
+  assert.equal(cancelado.cuerpo.viaje.motivoCancelacion, 'Motivo válido');
 });

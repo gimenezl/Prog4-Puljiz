@@ -4,6 +4,8 @@ import { PuntoGeografico } from '../value-objects/punto-geografico.js';
 export const ESTADOS_VIAJE = Object.freeze({
   SOLICITADO: 'SOLICITADO',
   ASIGNADO: 'ASIGNADO',
+  CHOFER_EN_CAMINO: 'CHOFER_EN_CAMINO',
+  EN_CURSO: 'EN_CURSO',
   CANCELADO_POR_PASAJERO: 'CANCELADO_POR_PASAJERO',
   CANCELADO_POR_CHOFER: 'CANCELADO_POR_CHOFER',
   CANCELADO_POR_SOPORTE: 'CANCELADO_POR_SOPORTE',
@@ -11,21 +13,19 @@ export const ESTADOS_VIAJE = Object.freeze({
   FINALIZADO: 'FINALIZADO',
 });
 
-/**
- * Estados que representan demanda activa para el multiplicador (RF-23).
- * `CHOFER_EN_CAMINO` y `EN_CURSO` llegan en la tarjeta E3; la migración 002 ya
- * los admite, y el conteo los incluye aunque la API todavía no los alcance.
- */
+/** Estados que representan demanda activa para el multiplicador (RF-23). */
 export const ESTADOS_DEMANDA_ACTIVA = Object.freeze([
   ESTADOS_VIAJE.SOLICITADO,
   ESTADOS_VIAJE.ASIGNADO,
-  'CHOFER_EN_CAMINO',
-  'EN_CURSO',
+  ESTADOS_VIAJE.CHOFER_EN_CAMINO,
+  ESTADOS_VIAJE.EN_CURSO,
 ]);
 
 const ESTADOS_VALIDOS = new Set(Object.values(ESTADOS_VIAJE));
 const ESTADOS_CON_CHOFER = new Set([
   ESTADOS_VIAJE.ASIGNADO,
+  ESTADOS_VIAJE.CHOFER_EN_CAMINO,
+  ESTADOS_VIAJE.EN_CURSO,
   ESTADOS_VIAJE.CANCELADO_POR_CHOFER,
   ESTADOS_VIAJE.FINALIZADO,
 ]);
@@ -69,14 +69,27 @@ function validarFechaOpcional(valor, mensaje) {
 }
 
 function validarMotivo(valor) {
-  if (typeof valor !== 'string' || valor.trim().length === 0) {
+  if (typeof valor !== 'string') {
+    throw new ErrorDeDominio('DATOS_INVALIDOS', 'El motivo de cancelación es obligatorio.');
+  }
+
+  const motivo = valor.trim();
+
+  if (motivo.length === 0) {
     throw new ErrorDeDominio(
       'DATOS_INVALIDOS',
       'El motivo de cancelación es obligatorio y no puede estar vacío.',
     );
   }
 
-  return valor.trim();
+  if (motivo.length > 500) {
+    throw new ErrorDeDominio(
+      'DATOS_INVALIDOS',
+      'El motivo de cancelación no puede superar los 500 caracteres.',
+    );
+  }
+
+  return motivo;
 }
 
 /**
@@ -98,6 +111,7 @@ export class Viaje {
   #estado;
   #solicitadoEn;
   #asignadoEn;
+  #iniciadoEn;
   #cerradoEn;
   #canceladoPorId;
   #motivoCancelacion;
@@ -115,6 +129,7 @@ export class Viaje {
     estado = ESTADOS_VIAJE.SOLICITADO,
     solicitadoEn,
     asignadoEn = null,
+    iniciadoEn = null,
     cerradoEn = null,
     canceladoPorId = null,
     motivoCancelacion = null,
@@ -185,7 +200,18 @@ export class Viaje {
     this.#estado = estado;
     this.#solicitadoEn = validarFecha(solicitadoEn, 'La fecha de solicitud no es válida.');
     this.#asignadoEn = validarFechaOpcional(asignadoEn, 'La fecha de asignación no es válida.');
+    this.#iniciadoEn = validarFechaOpcional(iniciadoEn, 'La fecha de inicio no es válida.');
     this.#cerradoEn = validarFechaOpcional(cerradoEn, 'La fecha de cierre no es válida.');
+
+    if (
+      (estado === ESTADOS_VIAJE.EN_CURSO || estado === ESTADOS_VIAJE.FINALIZADO) &&
+      this.#iniciadoEn === null
+    ) {
+      throw new ErrorDeDominio(
+        'DATOS_INVALIDOS',
+        'El estado del viaje requiere una fecha de inicio.',
+      );
+    }
     this.#canceladoPorId =
       canceladoPorId === null
         ? null
@@ -241,6 +267,10 @@ export class Viaje {
     return this.#asignadoEn ? new Date(this.#asignadoEn) : null;
   }
 
+  get iniciadoEn() {
+    return this.#iniciadoEn ? new Date(this.#iniciadoEn) : null;
+  }
+
   get cerradoEn() {
     return this.#cerradoEn ? new Date(this.#cerradoEn) : null;
   }
@@ -265,6 +295,28 @@ export class Viaje {
     );
   }
 
+  #copia(sobrescrituras) {
+    return new Viaje({
+      id: this.#id,
+      pasajeroId: this.#pasajeroId,
+      origen: this.#origen,
+      destino: this.#destino,
+      distanciaEstimadaM: this.#distanciaEstimadaM,
+      precioFijadoCentavos: this.#precioFijadoCentavos,
+      cotizacionId: this.#cotizacionId,
+      multiplicadorFijado: this.#multiplicadorFijado,
+      choferId: this.#choferId,
+      estado: this.#estado,
+      solicitadoEn: this.#solicitadoEn,
+      asignadoEn: this.#asignadoEn,
+      iniciadoEn: this.#iniciadoEn,
+      cerradoEn: this.#cerradoEn,
+      canceladoPorId: this.#canceladoPorId,
+      motivoCancelacion: this.#motivoCancelacion,
+      ...sobrescrituras,
+    });
+  }
+
   /** Asigna el viaje a un chofer. Solo se puede hacer una vez. */
   asignar(choferId, ahora) {
     if (this.#estado !== ESTADOS_VIAJE.SOLICITADO || this.#choferId !== null) {
@@ -274,69 +326,93 @@ export class Viaje {
       );
     }
 
-    return new Viaje({
-      id: this.#id,
-      pasajeroId: this.#pasajeroId,
-      origen: this.#origen,
-      destino: this.#destino,
-      distanciaEstimadaM: this.#distanciaEstimadaM,
-      precioFijadoCentavos: this.#precioFijadoCentavos,
-      cotizacionId: this.#cotizacionId,
-      multiplicadorFijado: this.#multiplicadorFijado,
+    return this.#copia({
       choferId: validarIdentificador(choferId, 'El identificador del chofer no es válido.'),
       estado: ESTADOS_VIAJE.ASIGNADO,
-      solicitadoEn: this.#solicitadoEn,
       asignadoEn: validarFecha(ahora, 'La fecha de asignación no es válida.'),
+      iniciadoEn: null,
+      cerradoEn: null,
+      canceladoPorId: null,
+      motivoCancelacion: null,
     });
   }
 
-  /** Finaliza el viaje asignado y fija la fecha de cierre. */
-  finalizar(ahora) {
+  /** Marca que el chofer asignado salió hacia el origen. */
+  marcarEnCamino() {
     if (this.#estado !== ESTADOS_VIAJE.ASIGNADO) {
-      throw new ErrorDeDominio('TRANSICION_INVALIDA', 'Solo un viaje asignado puede finalizarse.');
+      throw new ErrorDeDominio(
+        'TRANSICION_INVALIDA',
+        'Solo un viaje asignado puede marcarse en camino.',
+      );
     }
 
-    return new Viaje({
-      id: this.#id,
-      pasajeroId: this.#pasajeroId,
-      origen: this.#origen,
-      destino: this.#destino,
-      distanciaEstimadaM: this.#distanciaEstimadaM,
-      precioFijadoCentavos: this.#precioFijadoCentavos,
-      cotizacionId: this.#cotizacionId,
-      multiplicadorFijado: this.#multiplicadorFijado,
-      choferId: this.#choferId,
+    return this.#copia({ estado: ESTADOS_VIAJE.CHOFER_EN_CAMINO });
+  }
+
+  /** Inicia el viaje con el chofer en camino y fija la fecha de inicio. */
+  iniciar(ahora) {
+    if (this.#estado !== ESTADOS_VIAJE.CHOFER_EN_CAMINO) {
+      throw new ErrorDeDominio(
+        'TRANSICION_INVALIDA',
+        'Solo un viaje con el chofer en camino puede iniciarse.',
+      );
+    }
+
+    return this.#copia({
+      estado: ESTADOS_VIAJE.EN_CURSO,
+      iniciadoEn: validarFecha(ahora, 'La fecha de inicio no es válida.'),
+    });
+  }
+
+  /** Finaliza el viaje en curso y fija la fecha de cierre. */
+  finalizar(ahora) {
+    if (this.#estado !== ESTADOS_VIAJE.EN_CURSO) {
+      throw new ErrorDeDominio('TRANSICION_INVALIDA', 'Solo un viaje en curso puede finalizarse.');
+    }
+
+    return this.#copia({
       estado: ESTADOS_VIAJE.FINALIZADO,
-      solicitadoEn: this.#solicitadoEn,
-      asignadoEn: this.#asignadoEn,
       cerradoEn: validarFecha(ahora, 'La fecha de cierre no es válida.'),
     });
   }
 
   /** Cancela el viaje por decisión de su pasajero. */
   cancelarPorPasajero(ahora, motivo) {
-    if (this.#estado !== ESTADOS_VIAJE.SOLICITADO && this.#estado !== ESTADOS_VIAJE.ASIGNADO) {
+    if (
+      this.#estado !== ESTADOS_VIAJE.SOLICITADO &&
+      this.#estado !== ESTADOS_VIAJE.ASIGNADO &&
+      this.#estado !== ESTADOS_VIAJE.CHOFER_EN_CAMINO
+    ) {
       throw new ErrorDeDominio(
         'TRANSICION_INVALIDA',
         'El viaje ya no puede cancelarse en su estado actual.',
       );
     }
 
-    return new Viaje({
-      id: this.#id,
-      pasajeroId: this.#pasajeroId,
-      origen: this.#origen,
-      destino: this.#destino,
-      distanciaEstimadaM: this.#distanciaEstimadaM,
-      precioFijadoCentavos: this.#precioFijadoCentavos,
-      cotizacionId: this.#cotizacionId,
-      multiplicadorFijado: this.#multiplicadorFijado,
-      choferId: this.#choferId,
+    return this.#copia({
       estado: ESTADOS_VIAJE.CANCELADO_POR_PASAJERO,
-      solicitadoEn: this.#solicitadoEn,
-      asignadoEn: this.#asignadoEn,
       cerradoEn: validarFecha(ahora, 'La fecha de cierre no es válida.'),
       canceladoPorId: this.#pasajeroId,
+      motivoCancelacion: validarMotivo(motivo),
+    });
+  }
+
+  /** Cancela el viaje por decisión del chofer asignado. */
+  cancelarPorChofer(ahora, motivo) {
+    if (
+      this.#choferId === null ||
+      (this.#estado !== ESTADOS_VIAJE.ASIGNADO && this.#estado !== ESTADOS_VIAJE.CHOFER_EN_CAMINO)
+    ) {
+      throw new ErrorDeDominio(
+        'TRANSICION_INVALIDA',
+        'El viaje ya no puede cancelarse por el chofer en su estado actual.',
+      );
+    }
+
+    return this.#copia({
+      estado: ESTADOS_VIAJE.CANCELADO_POR_CHOFER,
+      cerradoEn: validarFecha(ahora, 'La fecha de cierre no es válida.'),
+      canceladoPorId: this.#choferId,
       motivoCancelacion: validarMotivo(motivo),
     });
   }
@@ -355,6 +431,7 @@ export class Viaje {
       estado: this.#estado,
       solicitadoEn: this.#solicitadoEn.toISOString(),
       asignadoEn: this.#asignadoEn ? this.#asignadoEn.toISOString() : null,
+      iniciadoEn: this.#iniciadoEn ? this.#iniciadoEn.toISOString() : null,
       cerradoEn: this.#cerradoEn ? this.#cerradoEn.toISOString() : null,
       canceladoPorId: this.#canceladoPorId,
       motivoCancelacion: this.#motivoCancelacion,

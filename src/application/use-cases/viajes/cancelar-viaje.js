@@ -3,9 +3,11 @@ import { ErrorDeDominio } from '../../../domain/errors/error-de-dominio.js';
 /**
  * Caso de uso: cancelar un viaje propio.
  *
- * Si el viaje ya tenía chofer, se libera en la misma operación atómica. La
- * fila del viaje se bloquea antes que la del chofer para respetar el orden
- * global de bloqueo.
+ * El actor puede ser el pasajero dueño o el chofer asignado. El estado final y
+ * los estados de origen válidos los decide el dominio según el vínculo con el
+ * viaje, no el rol del token. Si el viaje ya tenía chofer, se libera en la
+ * misma operación atómica; la fila del viaje se bloquea antes que la del
+ * chofer para respetar el orden global de bloqueo.
  */
 export function crearCancelarViaje({
   repositorioViajes,
@@ -13,7 +15,7 @@ export function crearCancelarViaje({
   unidadDeTrabajo,
   reloj,
 }) {
-  return async function cancelarViaje({ viajeId, pasajeroId, motivo }) {
+  return async function cancelarViaje({ viajeId, actor, motivo }) {
     return unidadDeTrabajo.ejecutar(async (tx) => {
       const viaje = await repositorioViajes.buscarPorIdParaActualizar(viajeId, tx);
 
@@ -21,11 +23,16 @@ export function crearCancelarViaje({
         throw new ErrorDeDominio('NO_ENCONTRADO', 'El viaje no existe.');
       }
 
-      if (viaje.pasajeroId !== pasajeroId) {
+      let cancelado;
+
+      if (viaje.pasajeroId === actor.usuarioId) {
+        cancelado = viaje.cancelarPorPasajero(reloj.ahora(), motivo);
+      } else if (viaje.choferId !== null && viaje.choferId === actor.usuarioId) {
+        cancelado = viaje.cancelarPorChofer(reloj.ahora(), motivo);
+      } else {
         throw new ErrorDeDominio('NO_AUTORIZADO', 'No tenés permiso para cancelar este viaje.');
       }
 
-      const cancelado = viaje.cancelarPorPasajero(reloj.ahora(), motivo);
       await repositorioViajes.actualizar(cancelado, tx);
 
       if (viaje.choferId !== null) {

@@ -1,5 +1,10 @@
 # Implementación del Bloque 5 — Viajes, concurrencia e idempotencia
 
+> **Nota de snapshot:** cubre el bloque original, anterior a las transiciones
+> `en-camino`/`iniciar` y a la cancelación actor-aware. Para el estado vigente y
+> los resultados reales de verificación, ver
+> `docs/rf09-rf07-rf22-rf08-rf10-requerimientos-y-cambios.md` (§3.4 y §9).
+
 Este documento describe los cambios implementados para el Bloque 5 del backend de
 viajes. El objetivo del bloque es permitir que un pasajero cree un pedido de viaje
 de forma segura e idempotente, que un chofer lo acepte sin que dos personas se

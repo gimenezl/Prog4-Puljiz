@@ -4,9 +4,9 @@ import test from 'node:test';
 import { CobroSimulado } from '../../../../src/domain/entities/cobro-simulado.js';
 import { crearKitViajes } from '../../../helpers/viajes-kit.js';
 
-test('finalizar un viaje asignado lo cierra, libera al chofer y registra un único cobro', async () => {
+test('finalizar un viaje en curso lo cierra, libera al chofer y registra un único cobro', async () => {
   const kit = crearKitViajes();
-  const { viaje, chofer } = await kit.crearViajeAsignado();
+  const { viaje, chofer } = await kit.crearViajeEnCurso();
 
   const resultado = await kit.finalizarViaje({
     viajeId: viaje.id,
@@ -42,7 +42,7 @@ test('finalizar un viaje asignado lo cierra, libera al chofer y registra un úni
 
 test('reintentar con la misma clave y el mismo viaje devuelve la respuesta original sin cobrar otra vez', async () => {
   const kit = crearKitViajes();
-  const { viaje, chofer } = await kit.crearViajeAsignado();
+  const { viaje, chofer } = await kit.crearViajeEnCurso();
 
   const primero = await kit.finalizarViaje({
     viajeId: viaje.id,
@@ -65,7 +65,7 @@ test('reintentar con la misma clave y el mismo viaje devuelve la respuesta origi
 
 test('la misma clave usada con otro viaje devuelve conflicto y no ejecuta otro cobro', async () => {
   const kit = crearKitViajes();
-  const primero = await kit.crearViajeAsignado();
+  const primero = await kit.crearViajeEnCurso();
 
   await kit.finalizarViaje({
     viajeId: primero.viaje.id,
@@ -73,7 +73,7 @@ test('la misma clave usada con otro viaje devuelve conflicto y no ejecuta otro c
     claveIdempotencia: 'clave-compartida',
   });
 
-  const segundo = await kit.crearViajeAsignado({ chofer: primero.chofer });
+  const segundo = await kit.crearViajeEnCurso({ chofer: primero.chofer });
 
   await assert.rejects(
     () =>
@@ -87,12 +87,42 @@ test('la misma clave usada con otro viaje devuelve conflicto y no ejecuta otro c
 
   assert.equal(kit.simuladorDeCobro.cantidadLlamadas, 1);
   assert.equal(kit.repositorioCobros.instantaneaMemoria().size, 1);
-  assert.equal((await kit.repositorioViajes.buscarPorId(segundo.viaje.id)).estado, 'ASIGNADO');
+  assert.equal((await kit.repositorioViajes.buscarPorId(segundo.viaje.id)).estado, 'EN_CURSO');
+});
+
+test('no se puede finalizar antes de iniciar el viaje', async () => {
+  const kit = crearKitViajes();
+  const asignado = await kit.crearViajeAsignado();
+
+  await assert.rejects(
+    () =>
+      kit.finalizarViaje({
+        viajeId: asignado.viaje.id,
+        choferId: asignado.chofer.usuarioId,
+        claveIdempotencia: 'demasiado-pronto',
+      }),
+    (error) => error.codigo === 'TRANSICION_INVALIDA',
+  );
+
+  const enCamino = await kit.crearViajeEnCamino();
+
+  await assert.rejects(
+    () =>
+      kit.finalizarViaje({
+        viajeId: enCamino.viaje.id,
+        choferId: enCamino.chofer.usuarioId,
+        claveIdempotencia: 'todavia-en-camino',
+      }),
+    (error) => error.codigo === 'TRANSICION_INVALIDA',
+  );
+
+  assert.equal(kit.simuladorDeCobro.cantidadLlamadas, 0);
+  assert.equal(kit.repositorioCobros.instantaneaMemoria().size, 0);
 });
 
 test('dos reintentos simultáneos con la misma clave cobran una sola vez', async () => {
   const kit = crearKitViajes();
-  const { viaje, chofer } = await kit.crearViajeAsignado();
+  const { viaje, chofer } = await kit.crearViajeEnCurso();
 
   const resultados = await Promise.all([
     kit.finalizarViaje({
@@ -115,7 +145,7 @@ test('dos reintentos simultáneos con la misma clave cobran una sola vez', async
 
 test('dos finalizaciones simultáneas con claves distintas cobran una sola vez', async () => {
   const kit = crearKitViajes();
-  const { viaje, chofer } = await kit.crearViajeAsignado();
+  const { viaje, chofer } = await kit.crearViajeEnCurso();
 
   const resultados = await Promise.allSettled([
     kit.finalizarViaje({
@@ -142,7 +172,7 @@ test('dos finalizaciones simultáneas con claves distintas cobran una sola vez',
 
 test('una clave vencida no reproduce la respuesta y el viaje ya finalizado no se cobra de nuevo', async () => {
   const kit = crearKitViajes({ ttlIdempotenciaMs: 1000 });
-  const { viaje, chofer } = await kit.crearViajeAsignado();
+  const { viaje, chofer } = await kit.crearViajeEnCurso();
 
   await kit.finalizarViaje({
     viajeId: viaje.id,
@@ -168,7 +198,7 @@ test('una clave vencida no reproduce la respuesta y el viaje ya finalizado no se
 
 test('rechaza finalizar sin clave, con otro chofer o en un estado inválido', async () => {
   const kit = crearKitViajes();
-  const { viaje, chofer } = await kit.crearViajeAsignado();
+  const { viaje, chofer } = await kit.crearViajeEnCurso();
 
   await assert.rejects(
     () =>
@@ -211,7 +241,7 @@ test('rechaza finalizar sin clave, con otro chofer o en un estado inválido', as
 
 test('el repositorio de cobros impone la unicidad natural por viaje', async () => {
   const kit = crearKitViajes();
-  const { viaje } = await kit.crearViajeAsignado();
+  const { viaje } = await kit.crearViajeEnCurso();
 
   const primero = new CobroSimulado({
     id: '00000000-0000-4000-8000-000000000020',
@@ -229,4 +259,46 @@ test('el repositorio de cobros impone la unicidad natural por viaje', async () =
   assert.equal(await kit.repositorioCobros.crear(primero), true);
   assert.equal(await kit.repositorioCobros.crear(segundo), false);
   assert.equal((await kit.repositorioCobros.buscarPorViajeId(viaje.id)).id, primero.id);
+});
+
+test('con claves distintas, finalizar gana la carrera contra la cancelación y cobra una sola vez', async () => {
+  const kit = crearKitViajes();
+  const { viaje, chofer } = await kit.crearViajeEnCurso();
+
+  const resultados = await Promise.allSettled([
+    kit.cancelarViaje({
+      viajeId: viaje.id,
+      actor: { usuarioId: chofer.usuarioId, rol: 'CHOFER' },
+      motivo: 'Cancelación intentada en curso',
+    }),
+    kit.finalizarViaje({
+      viajeId: viaje.id,
+      choferId: chofer.usuarioId,
+      claveIdempotencia: 'carrera-finalizar-clave-a',
+    }),
+    kit.finalizarViaje({
+      viajeId: viaje.id,
+      choferId: chofer.usuarioId,
+      claveIdempotencia: 'carrera-finalizar-clave-b',
+    }),
+  ]);
+
+  const exitosos = resultados.filter((resultado) => resultado.status === 'fulfilled');
+  const rechazados = resultados.filter((resultado) => resultado.status === 'rejected');
+
+  assert.equal(exitosos.length, 1);
+  assert.equal(rechazados.length, 2);
+  for (const rechazado of rechazados) {
+    assert.equal(rechazado.reason.codigo, 'TRANSICION_INVALIDA');
+  }
+
+  assert.equal(exitosos[0].value.viaje.estado, 'FINALIZADO');
+  assert.equal(kit.simuladorDeCobro.cantidadLlamadas, 1);
+  assert.equal(kit.repositorioCobros.instantaneaMemoria().size, 1);
+
+  const guardado = await kit.repositorioViajes.buscarPorId(viaje.id);
+  assert.equal(guardado.estado, 'FINALIZADO');
+
+  const choferGuardado = await kit.repositorioChoferes.buscarPorUsuarioId(chofer.usuarioId);
+  assert.equal(choferGuardado.viajeActivoId, null);
 });

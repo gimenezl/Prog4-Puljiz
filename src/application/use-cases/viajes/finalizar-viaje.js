@@ -86,10 +86,10 @@ export function crearFinalizarViaje({
           );
         }
 
-        if (viaje.estado !== ESTADOS_VIAJE.ASIGNADO) {
+        if (viaje.estado !== ESTADOS_VIAJE.EN_CURSO) {
           throw new ErrorDeDominio(
             'TRANSICION_INVALIDA',
-            'Solo un viaje asignado puede finalizarse.',
+            'Solo un viaje en curso puede finalizarse.',
           );
         }
 

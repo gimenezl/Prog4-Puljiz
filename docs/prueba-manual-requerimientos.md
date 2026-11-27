@@ -472,7 +472,13 @@ jq -r '.error.codigo' /tmp/finalizar-ajeno.json
 - Chofer ajeno al aceptar: `409 VIAJE_NO_DISPONIBLE`.
 - Chofer ajeno al finalizar: `403 NO_AUTORIZADO`.
 
-#### 5.3 Cancelación: solo el pasajero dueño
+> En este punto el viaje sigue `ASIGNADO`. El chofer asignado tampoco puede
+> finalizarlo todavía: debe pasar por `/en-camino` y `/iniciar` (PM-06). Desde
+> `ASIGNADO` o `CHOFER_EN_CAMINO`, `finalizar` responde `409 TRANSICION_INVALIDA`
+> con `"Solo un viaje en curso puede finalizarse."`; sobre `SOLICITADO` responde
+> `403` porque se valida al chofer antes que el estado (D27).
+
+#### 5.3 Cancelación: actor-aware (pasajero dueño o chofer asignado)
 
 Crear un viaje descartable:
 
@@ -507,7 +513,8 @@ do
 done
 ```
 
-**Esperado:** `403 NO_AUTORIZADO` en los cuatro casos.
+**Esperado:** `403 NO_AUTORIZADO` en los cuatro casos: el chofer no tiene
+vínculo con un viaje `SOLICITADO` y soporte no cancela (D8).
 
 Cancelación del dueño:
 
@@ -519,7 +526,36 @@ curl -s -X POST "$BASE/viajes/$CANCELAR_ID/cancelar" \
   | jq -e '.viaje.estado == "CANCELADO_POR_PASAJERO"'
 ```
 
-**Esperado:** `200` y estado `CANCELADO_POR_PASAJERO`.
+**Esperado:** `200` y estado `CANCELADO_POR_PASAJERO`. El chofer queda libre;
+`motivo` es obligatorio, no vacío y de hasta 500 caracteres (501 da
+`400 DATOS_INVALIDOS`).
+
+Cancelación por el chofer asignado (ruta única, sin soporte). Si `chofer2` no
+está habilitado, habilitalo primero con el administrador (PM-05.4) o usá otro
+chofer libre:
+
+```bash
+CLAVE_CANCEL_CHOFER="manual-cancel-chofer-$(date +%s)-$RANDOM"
+CANCEL_CHOFER_JSON=$(curl -s -X POST "$BASE/viajes" \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer $TOKEN_PASAJERO" \
+  -H "Idempotency-Key: $CLAVE_CANCEL_CHOFER" \
+  -d '{"origen":{"lat":-34.60,"lng":-58.38},"destino":{"lat":-34.61,"lng":-58.37}}')
+CANCEL_CHOFER_ID=$(echo "$CANCEL_CHOFER_JSON" | jq -r '.viaje.id')
+
+curl -s -X POST "$BASE/viajes/$CANCEL_CHOFER_ID/aceptar" \
+  -H "authorization: Bearer $TOKEN_CHOFER2" | jq -e '.viaje.estado == "ASIGNADO"'
+
+curl -s -X POST "$BASE/viajes/$CANCEL_CHOFER_ID/cancelar" \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer $TOKEN_CHOFER2" \
+  -d '{"motivo":"El chofer no puede continuar"}' \
+  | jq -e '.viaje.estado == "CANCELADO_POR_CHOFER"'
+```
+
+**Esperado:** `200`, `canceladoPorId = choferId`, `choferId` conservado como
+historial y `choferes/yo` de `chofer2` sin `viajeActivoId`. Desde `EN_CURSO` el
+chofer recibe `409` (R10-04), por lo que `finalizar` gana siempre.
 
 #### 5.4 Usuarios y perfiles de chofer
 
@@ -607,6 +643,15 @@ actualizado.
 chofer y registra un cobro simulado.
 
 ```bash
+# El viaje quedó ASIGNADO en PM-04. Solo se finaliza desde EN_CURSO:
+curl -s -X POST "$BASE/viajes/$VIAJE_ID/en-camino" \
+  -H "authorization: Bearer $TOKEN_CHOFER1" \
+  | jq -e '.viaje.estado == "CHOFER_EN_CAMINO"'
+
+curl -s -X POST "$BASE/viajes/$VIAJE_ID/iniciar" \
+  -H "authorization: Bearer $TOKEN_CHOFER1" \
+  | jq -e '.viaje.estado == "EN_CURSO" and .viaje.iniciadoEn != null'
+
 CLAVE_FINAL="manual-final-$(date +%s)-$RANDOM"
 
 curl -s -D /tmp/final.headers -o /tmp/final.json \
@@ -626,6 +671,7 @@ Validación automática de la respuesta:
 jq -e --arg id "$VIAJE_ID" --arg ref "SIM-$VIAJE_ID" --argjson monto "$PRECIO" '
   .viaje.id == $id and
   .viaje.estado == "FINALIZADO" and
+  .viaje.iniciadoEn != null and
   .viaje.cerradoEn != null and
   .cobro.viajeId == $id and
   .cobro.estado == "COBRADO" and
@@ -639,8 +685,9 @@ COBRO_ID=$(jq -r '.cobro.id' /tmp/final.json)
 echo "Cobro: $COBRO_ID"
 ```
 
-**Esperado:** `200`; viaje `FINALIZADO`; cobro `COBRADO`; monto igual al precio
-fijado; referencia determinista `SIM-<viajeId>`; fechas no nulas.
+**Esperado:** `200`; viaje `FINALIZADO` con `iniciadoEn` y `cerradoEn` no nulos;
+cobro `COBRADO`; monto igual al precio fijado; referencia determinista
+`SIM-<viajeId>`. El cobro sigue usando `precioFijadoCentavos` (D7).
 
 Verificar el viaje y la liberación del chofer:
 
@@ -731,6 +778,14 @@ echo "Viaje 2: $VIAJE2_ID"
 curl -s -X POST "$BASE/viajes/$VIAJE2_ID/aceptar" \
   -H "authorization: Bearer $TOKEN_CHOFER1" | jq -e '.viaje.estado == "ASIGNADO"'
 
+curl -s -X POST "$BASE/viajes/$VIAJE2_ID/en-camino" \
+  -H "authorization: Bearer $TOKEN_CHOFER1" \
+  | jq -e '.viaje.estado == "CHOFER_EN_CAMINO"'
+
+curl -s -X POST "$BASE/viajes/$VIAJE2_ID/iniciar" \
+  -H "authorization: Bearer $TOKEN_CHOFER1" \
+  | jq -e '.viaje.estado == "EN_CURSO"'
+
 # Todavía no tiene cobro
 curl -s -o /tmp/cobro-antes.json -w 'cobro antes de finalizar: %{http_code}\n' \
   "$BASE/viajes/$VIAJE2_ID/cobro" \
@@ -753,12 +808,12 @@ jq -e '.error.codigo == "CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO"' \
 ```
 
 **Esperado:** `409 CLAVE_REUTILIZADA_CON_OTRO_CONTENIDO`; el segundo viaje sigue
-`ASIGNADO` y sin cobro.
+`EN_CURSO` y sin cobro.
 
 ```bash
 curl -s "$BASE/viajes/$VIAJE2_ID" \
   -H "authorization: Bearer $TOKEN_PASAJERO" \
-  | jq -e '.viaje.estado == "ASIGNADO"'
+  | jq -e '.viaje.estado == "EN_CURSO"'
 
 curl -s -o /tmp/cobro-sigue-404.json -w 'cobro tras conflicto: %{http_code}\n' \
   "$BASE/viajes/$VIAJE2_ID/cobro" \
@@ -801,6 +856,10 @@ VIAJE3_JSON=$(curl -s -X POST "$BASE/viajes" \
 VIAJE3_ID=$(echo "$VIAJE3_JSON" | jq -r '.viaje.id')
 
 curl -s -X POST "$BASE/viajes/$VIAJE3_ID/aceptar" \
+  -H "authorization: Bearer $TOKEN_CHOFER1" >/dev/null
+curl -s -X POST "$BASE/viajes/$VIAJE3_ID/en-camino" \
+  -H "authorization: Bearer $TOKEN_CHOFER1" >/dev/null
+curl -s -X POST "$BASE/viajes/$VIAJE3_ID/iniciar" \
   -H "authorization: Bearer $TOKEN_CHOFER1" >/dev/null
 
 CLAVE_CONC="manual-conc-$(date +%s)-$RANDOM"
@@ -878,7 +937,9 @@ sin token; `404 NO_ENCONTRADO` para un viaje inexistente.
 ### PM-10. Invariantes en PostgreSQL
 
 **Objetivo:** comprobar en la base que el cobro es único, coherente y que la
-idempotencia y la liberación del chofer quedaron persistidas.
+idempotencia y la liberación del chofer quedaron persistidas. Es uno de los 3
+casos omitidos por `pnpm verificar` (sin base real); `pnpm verificar:postgres`
+lo incluye.
 
 > Si no usás Docker para PostgreSQL, reemplazá
 > `docker compose exec -T db psql -U admin -d proy_db` por
@@ -944,7 +1005,8 @@ Estado del viaje y del chofer:
 
 ```bash
 docker compose exec -T db psql -U admin -d proy_db -c "
-SELECT id, estado, cerrado_en IS NOT NULL AS cerrado
+SELECT id, estado, iniciado_en IS NOT NULL AS iniciado,
+       cerrado_en IS NOT NULL AS cerrado
 FROM viajes
 WHERE id IN ('$VIAJE_ID', '$VIAJE2_ID')
 ORDER BY id;
@@ -955,7 +1017,7 @@ WHERE usuario_id = '$CHOFER1_ID';
 "
 ```
 
-**Esperado:** viajes `FINALIZADO` con `cerrado = t`; chofer con
+**Esperado:** viajes `FINALIZADO` con `iniciado = t` y `cerrado = t`; chofer con
 `viaje_activo_id` nulo, `habilitado = t` y `disponible = t`.
 
 Registros de idempotencia de la finalización:
@@ -1058,7 +1120,8 @@ jq -e '.error.codigo == "DEMASIADAS_SOLICITUDES"' /tmp/rate-reg-2.json
 ### PM-12. Rate limit de viajes
 
 **Objetivo:** verificar el límite compartido por `POST /viajes`, `/aceptar`,
-`/finalizar` y `/cancelar`.
+`/en-camino`, `/iniciar`, `/finalizar`, `/cancelar`, `/cotizaciones`, la
+confirmación y las escrituras administrativas.
 
 En la misma instancia auxiliar (`VIAJES_RATE_LIMIT_MAX=1`):
 
@@ -1100,7 +1163,8 @@ jq -e '.error.codigo == "DEMASIADAS_SOLICITUDES"' /tmp/rate-trip-2.json
 `RateLimit-Remaining: 0`; segundo `429` con `Retry-After` y
 `DEMASIADAS_SOLICITUDES`.
 
-> El límite se comparte entre crear, aceptar, finalizar y cancelar. Si ya hiciste
+> El límite se comparte entre crear, aceptar, `en-camino`, `iniciar`, finalizar,
+> cancelar, cotizar, confirmar y las escrituras de configuración. Si ya hiciste
 > una de esas operaciones en esta instancia, el primer `POST /viajes` puede dar
 > `429`; reiniciá la instancia para limpiar el contador.
 
@@ -1431,34 +1495,44 @@ El análisis y la justificación están en `docs/auditoria-dependencias.md`.
 **Objetivo:** confirmar que las pruebas automatizadas acompañan a cada
 requerimiento.
 
+Orden ejecutado con Docker disponible:
+
 ```bash
-pnpm lint
 pnpm format:check
-pnpm test
-pnpm test:integration:db
-```
+pnpm lint
+pnpm test:unit
+pnpm test:integration
 
-**Esperado (al momento de escribir esta guía):**
-
-| Comando | Resultado |
-|---|---|
-| `pnpm lint` | Sin errores |
-| `pnpm format:check` | Sin diferencias |
-| `pnpm test` | 157 tests OK; los de PostgreSQL real quedan omitidos |
-| `pnpm test:integration:db` | Tests de PostgreSQL real OK; levanta y baja la base efímera |
-
-Para correr la suite completa contra PostgreSQL real:
-
-```bash
 pnpm test:db:up
+pnpm test:integration:db
+pnpm test:db:down
 
-TEST_DATABASE_URL=postgresql://admin:password@127.0.0.1:5433/proy_db_test \
-  pnpm test
+pnpm verificar
 
+pnpm test:db:up
+pnpm verificar:postgres
 pnpm test:db:down
 ```
 
-**Esperado:** 171 tests OK.
+**Resultados reales:**
+
+| Comando | Resultado |
+|---|---|
+| `pnpm format:check` | OK |
+| `pnpm lint` | OK (se vuelve a correr al cierre) |
+| `pnpm test:unit` | 189 tests, 189 pass, 0 fail |
+| `pnpm test:integration` | 58 tests, 58 pass, 0 fail; 4 suites PG omitidas aquí |
+| `pnpm test:db:up` → `pnpm test:integration:db` → `pnpm test:db:down` | 48 tests PostgreSQL reales, 48 pass, 0 fail, 0 skipped |
+| `pnpm verificar` | 15 OK, 0 fail, 3 omitidos (PM-10, PM-17, PM-18) |
+| `pnpm test:db:up` → `pnpm verificar:postgres` | 16 OK, 0 fail, 2 omitidos (PM-17 requiere `--auditoria`, PM-18 requiere `--suite`) |
+
+Las 4 suites omitidas en `pnpm test:integration` se ejecutan en
+`pnpm test:integration:db`: incluyen 50 aceptaciones concurrentes, las carreras
+nuevas y motivo 500/501. `pnpm test:integration:db` levanta y baja la base
+efímera; `pnpm verificar:postgres` necesita `pnpm test:db:up` previo.
+
+`TEST_DATABASE_URL` solo permite apuntar a una base externa con
+`pnpm test:integration`; no fue necesaria para esta ejecución.
 
 También podés ejecutar solo los tests de los requerimientos de esta guía:
 
