@@ -515,7 +515,7 @@ Forma del viaje en todas las respuestas:
 | `precioFijadoCentavos` | Precio fijado al crear el viaje. Al confirmar una cotización se **copia** de ella; `POST /viajes` sigue usando la tarifa provisional por distancia (§8, D1). |
 | `cotizacionId`, `multiplicadorFijado` | Cotización de origen y multiplicador copiado al confirmar (ADR-0005). Son `null` y `"1.0000"` en los viajes creados con `POST /viajes`. |
 | `choferId` | Chofer asignado o `null`. Se conserva como historial si el viaje se cancela. |
-| `estado` | Alcanzables por la API: `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO`, `EN_CURSO`, `FINALIZADO`, `CANCELADO_POR_PASAJERO` y `CANCELADO_POR_CHOFER`. `CANCELADO_POR_SOPORTE` y `SIN_CHOFERES_DISPONIBLES` siguen sin productor (D8 y RF-22). |
+| `estado` | Alcanzables por la API: `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO`, `EN_CURSO`, `FINALIZADO`, `CANCELADO_POR_PASAJERO`, `CANCELADO_POR_CHOFER` y `CANCELADO_POR_SOPORTE`. `SIN_CHOFERES_DISPONIBLES` sigue sin productor (RF-22). |
 | `solicitadoEn`, `asignadoEn`, `iniciadoEn`, `cerradoEn` | Instantes de cada etapa. `iniciadoEn` se fija al `iniciar` y se conserva en `FINALIZADO`; es `null` en los estados previos. |
 | `canceladoPorId`, `motivoCancelacion` | Autor y motivo de la cancelación. |
 
@@ -720,13 +720,21 @@ Después, `GET /choferes/yo` devuelve `"viajeActivoId": "5d2e8f14-…"` y `"esta
 
 #### `POST /viajes/{id}/cancelar`
 
-- **Roles:** `PASAJERO` o `CHOFER`. Por recurso: solo el **pasajero dueño** o el
-  **chofer asignado**. La decisión la toma el vínculo con el viaje, no el rol:
-  no hay ruta separada ni cancelación por soporte (D8).
-- **Descripción:** el pasajero cancela desde `SOLICITADO`, `ASIGNADO` o
-  `CHOFER_EN_CAMINO` y deja `CANCELADO_POR_PASAJERO`; el chofer asignado cancela
-  desde `ASIGNADO` o `CHOFER_EN_CAMINO` y deja `CANCELADO_POR_CHOFER`. Si había
-  chofer, lo libera en la misma transacción y conserva `choferId` como historial.
+- **Roles:** `PASAJERO`, `CHOFER` u `OPERADOR_SOPORTE`. Por recurso: el
+  **pasajero dueño**, el **chofer asignado** o **cualquier operador de soporte**
+  (RF-15). El administrador no puede cancelar: solo mira.
+- **Descripción:** el estado final lo decide quién cancela:
+
+| Actor | Puede cancelar desde | Estado final |
+|---|---|---|
+| Pasajero dueño | `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO` | `CANCELADO_POR_PASAJERO` |
+| Chofer asignado | `ASIGNADO`, `CHOFER_EN_CAMINO` | `CANCELADO_POR_CHOFER` |
+| Operador de soporte | `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO`, **`EN_CURSO`** | `CANCELADO_POR_SOPORTE` |
+
+  Soporte es el único que puede cortar un viaje `EN_CURSO`, para que ningún viaje
+  quede trabado. Si había chofer, se libera en la misma transacción y `choferId`
+  se conserva como historial. **Cancelar nunca genera cobro.** `canceladoPorId`
+  es el usuario que canceló.
 - **Cuerpo:**
 
 ```json
@@ -768,10 +776,98 @@ check de no vacío**. Superar 500 caracteres lo rechazan el dominio y la base
 | HTTP | Código | Ejemplo de causa |
 |---:|---|---|
 | 400 | `DATOS_INVALIDOS` | Sin `motivo` → `"Datos inválidos: motivo: Invalid input: expected string, received undefined"` (mensaje por defecto de Zod, §8, D20); vacío o >500 caracteres. |
-| 403 | `NO_AUTORIZADO` | Administrador u operador de soporte → `"No tenés permiso para realizar esta operación."` (por rol; D8). |
+| 403 | `NO_AUTORIZADO` | Administrador → `"No tenés permiso para realizar esta operación."` (por rol). |
 | 403 | `NO_AUTORIZADO` | Otro pasajero u otro chofer → `"No tenés permiso para cancelar este viaje."` (por recurso). Un chofer sobre un viaje `SOLICITADO` también recibe `403`, porque no tiene vínculo como asignado. |
 | 404 | `NO_ENCONTRADO` | `"El viaje no existe."` |
-| 409 | `TRANSICION_INVALIDA` | Ya cancelado → `"El viaje ya no puede cancelarse en su estado actual."`; chofer en `EN_CURSO` → `"El viaje ya no puede cancelarse por el chofer en su estado actual."`; pasajero en `EN_CURSO` → la misma regla del pasajero. |
+| 409 | `TRANSICION_INVALIDA` | Ya cancelado → `"El viaje ya no puede cancelarse en su estado actual."`; chofer en `EN_CURSO` → `"El viaje ya no puede cancelarse por el chofer en su estado actual."`; pasajero en `EN_CURSO` → la misma regla del pasajero; soporte sobre un viaje terminado. |
+
+Ejemplo real de soporte cancelando un viaje solicitado:
+
+```json
+{
+  "viaje": {
+    "id": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
+    "estado": "CANCELADO_POR_SOPORTE",
+    "choferId": null,
+    "cerradoEn": "2026-11-28T04:40:33.196Z",
+    "canceladoPorId": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d04",
+    "motivoCancelacion": "Pedido duplicado"
+  }
+}
+```
+
+#### `GET /viajes`
+
+- **Roles:** `PASAJERO` y `CHOFER`. Por recurso: solo los viajes donde el
+  solicitante **participa**, como pasajero o como chofer asignado (RF-14). Nunca
+  viajes ajenos. Soporte y administración usan `GET /viajes/activos` o
+  `GET /viajes/{id}`.
+- **Descripción:** historial propio, del más nuevo al más viejo (`solicitadoEn` y
+  después `id`), en cualquier estado.
+- **Parámetros de consulta** (estrictos: uno no declarado da `400`):
+
+| Parámetro | Tipo | Reglas |
+|---|---|---|
+| `limite` | entero | 1 a 100, por defecto 20. |
+| `cursor` | texto | Opcional. El `siguienteCursor` de la página anterior, tal cual. |
+| `estado` | texto | Opcional. Un estado del viaje (por ejemplo, `FINALIZADO`). |
+
+- **Paginación por cursor:** la respuesta trae `siguienteCursor`. Si es `null`, no
+  hay más páginas; si no, se pide `GET /viajes?cursor=<siguienteCursor>`. El cursor
+  es **opaco**: codifica en base64url la posición (`solicitadoEn`, `id`) del último
+  viaje mostrado, y la página siguiente devuelve los viajes estrictamente
+  anteriores. A diferencia de `OFFSET`, no repite ni saltea viajes si entran
+  viajes nuevos mientras se pagina, y la base salta directo a la posición con los
+  índices `viajes_pasajero_historial_idx` y `viajes_chofer_historial_idx`
+  (migración `014`), sin leer las páginas anteriores.
+- **Éxito:** `200 OK` (ejemplo real, `?limite=2`; se muestra un viaje):
+
+```json
+{
+  "viajes": [
+    {
+      "id": "5d2e8f14-6a3b-4c7d-9e1f-2a3b4c5d6e10",
+      "pasajeroId": "3f1c2a9e-5b7d-4c11-9a2e-0d4b6f8e1a01",
+      "origen": { "lat": -34.6037, "lng": -58.3816 },
+      "destino": { "lat": -34.6097, "lng": -58.3925 },
+      "distanciaEstimadaM": 1200,
+      "precioFijadoCentavos": 160000,
+      "cotizacionId": null,
+      "multiplicadorFijado": "1.0000",
+      "choferId": null,
+      "estado": "SOLICITADO",
+      "solicitadoEn": "2026-11-28T04:40:33.148Z",
+      "asignadoEn": null,
+      "iniciadoEn": null,
+      "cerradoEn": null,
+      "canceladoPorId": null,
+      "motivoCancelacion": null
+    }
+  ],
+  "siguienteCursor": "eyJ0IjoiMjAyNi0xMS0yOFQwNDo0MDozMy4xMzJaIiwiaWQiOiI2ZWE0NjhlMC01OTFkLTRiZDctOGViMy01MTdkYjZkNDVmYzYifQ"
+}
+```
+
+- **Errores:**
+
+| HTTP | Código | Causa |
+|---:|---|---|
+| 400 | `DATOS_INVALIDOS` | Cursor inválido → `"El cursor no es válido."`; `limite` fuera de rango; `estado` inexistente; parámetro no declarado. |
+| 401 | `NO_AUTENTICADO` | Sin token. |
+| 403 | `NO_AUTORIZADO` | Soporte o administrador → `"El historial es solo para pasajeros y choferes."` |
+
+#### `GET /viajes/activos`
+
+- **Roles:** `OPERADOR_SOPORTE` (para atender reclamos y cancelar) y
+  `ADMINISTRADOR` (solo lectura).
+- **Descripción:** viajes `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO` y
+  `EN_CURSO` de todo el sistema, del más nuevo al más viejo (RF-15). No incluye
+  ubicaciones (RF-21).
+- **Parámetros de consulta:** `limite` y `cursor`, con las mismas reglas que
+  `GET /viajes`.
+- **Éxito:** `200 OK` con `{ "viajes": [ … ], "siguienteCursor": "…" | null }`.
+- **Errores:** `400 DATOS_INVALIDOS` (parámetros), `401`, `403 NO_AUTORIZADO`
+  (pasajero o chofer → `"Solo soporte y administración ven los viajes activos."`).
 
 #### `POST /viajes/{id}/finalizar`
 
@@ -1221,7 +1317,7 @@ estado de origen no es el exigido.
 | `POST /viajes/{id}/en-camino` | `CHOFER` asignado | `ASIGNADO` → `CHOFER_EN_CAMINO` | Implementado |
 | `POST /viajes/{id}/iniciar` | `CHOFER` asignado | `CHOFER_EN_CAMINO` → `EN_CURSO` (fija `iniciadoEn`) | Implementado |
 | `POST /viajes/{id}/finalizar` | `CHOFER` asignado | `EN_CURSO` → `FINALIZADO` (con `Idempotency-Key`) | Implementado; cobro con `precioFijadoCentavos` (D7) |
-| `POST /viajes/{id}/cancelar` | `PASAJERO` dueño o `CHOFER` asignado | Según actor y estado, ver abajo | Implementado; sin soporte (D8) |
+| `POST /viajes/{id}/cancelar` | `PASAJERO` dueño, `CHOFER` asignado u `OPERADOR_SOPORTE` | Según actor y estado (§4.4) | Implementado, con soporte (RF-15) |
 
 El serialize se logra con `SELECT ... FOR UPDATE` sobre la fila del viaje y
 validación de dominio antes del `UPDATE`, no con `UPDATE ... WHERE estado =
@@ -1258,9 +1354,9 @@ actuales; el caso de uso decide según el vínculo con el viaje, no según el ro
 |---|---|---|
 | `PASAJERO` dueño | `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO` | `CANCELADO_POR_PASAJERO` |
 | `CHOFER` asignado | `ASIGNADO`, `CHOFER_EN_CAMINO` | `CANCELADO_POR_CHOFER` |
-| `OPERADOR_SOPORTE` | — | **Pendiente (Q10 / D8): no implementado**, recibe `403` por rol |
+| `OPERADOR_SOPORTE` | `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO`, `EN_CURSO` | `CANCELADO_POR_SOPORTE` (Q10, RF-15) |
 
-En los dos casos implementados el chofer se libera en la misma transacción y se
+En todos los casos el chofer se libera en la misma transacción y se
 conserva `choferId` como historial. `motivo` se valida en HTTP y dominio; la
 base exige no nulo en cancelados y `VARCHAR(500)`, pero no valida el vacío.
 Cuando RF-07 se implemente, las ofertas pendientes pasarán a `ANULADA`; hoy no
@@ -1306,24 +1402,13 @@ El cobro simulado **ya existe**: se registra y se ejecuta dentro de `POST /viaje
 
 ### 5.9 Historial y soporte
 
-Todas: **Propuesto — tarjeta E5 · historial y soporte**.
+`GET /viajes` (historial propio), `GET /viajes/activos` (soporte y
+administración) y la cancelación por soporte **ya existen** (§4.4). Quedan
+propuestos para más adelante:
 
-#### `GET /viajes`
-
-- **Roles:** `PASAJERO` y `CHOFER` (solo los viajes donde participan), `ADMINISTRADOR` (todos, solo lectura).
-- **Parámetros de consulta:** `estado` (opcional, repetible), `desde` y `hasta` (ISO-8601), `limite` (1 a 100, por defecto 20), `cursor` (opaco, devuelto por la página anterior).
-- **Éxito:** `200 OK` con `{ "viajes": [ … ], "siguienteCursor": "…" | null }`, ordenados por `solicitadoEn` descendente.
-
-#### `GET /viajes/activos`
-
-- **Roles:** `OPERADOR_SOPORTE`, `ADMINISTRADOR`.
-- **Descripción:** viajes `SOLICITADO`, `ASIGNADO`, `CHOFER_EN_CAMINO` y `EN_CURSO`, para atender reclamos. Sin ubicaciones (RF-21).
-- **Parámetros de consulta:** `limite`, `cursor`.
-- **Éxito:** `200 OK` con `{ "viajes": [ … ], "siguienteCursor": … }`.
-
-La cancelación por soporte **no está implementada**: la ruta actual
-`POST /viajes/{id}/cancelar` es actor-aware y admite solo pasajero dueño o chofer
-asignado (§5.6, D8).
+- Filtros por fecha `desde` y `hasta` en el historial.
+- Que soporte vea los datos básicos de los participantes de los viajes que
+  atiende (§8, D10) y el perfil del chofer (`GET /choferes/{usuarioId}`, §5.4).
 
 ### 5.10 Integración con Python
 
@@ -1403,7 +1488,7 @@ Los endpoints propios de Python (`POST /reportes/zonas/{zonaId}/actualizar` y `G
 | `GET /viajes/{id}` | propio | propio (asignado) | ✓ | ✓ | ✗ |
 | `POST /viajes/{id}/aceptar` | ✗ | ✓ (elegible) | ✗ | ✗ | ✗ |
 | `POST /viajes/{id}/en-camino`, `…/iniciar` | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
-| `POST /viajes/{id}/cancelar` | propio (dueño) | propio (asignado) | ✗ | ✗ | ✗ |
+| `POST /viajes/{id}/cancelar` | propio (dueño) | propio (asignado) | ✓ (también `EN_CURSO`) | ✗ | ✗ |
 | `POST /viajes/{id}/finalizar` | ✗ | propio (asignado) | ✗ | ✗ | ✗ |
 | `GET /viajes/{id}/cobro` | propio | propio (asignado) | ✓ | ✓ | ✗ |
 | *`POST /usuarios`* | ✗ | ✗ | ✗ | ✓ | ✗ |
@@ -1418,11 +1503,10 @@ Los endpoints propios de Python (`POST /reportes/zonas/{zonaId}/actualizar` y `G
 | `PUT /choferes/yo/ubicacion` | ✗ | propio (habilitado) | ✗ | ✗ | ✗ |
 | *`GET /ofertas`* | ✗ | propio | ✗ | ✗ | ✗ |
 | *`POST /ofertas/{id}/aceptar`, `…/rechazar`* | ✗ | propio (destinatario) | ✗ | ✗ | ✗ |
-| *`POST /viajes/{id}/cancelar` (soporte, pendiente D8)* | ✗ | ✗ | ✓ | ✗ | ✗ |
 | *`GET /viajes/{id}/ubicacion`, `…/recorrido`* | propio (activo) | propio (asignado, activo) | ✗ | ✗ | ✗ |
 | *Canal de tiempo real* | propio | propio | ✗ | ✗ | ✗ |
-| *`GET /viajes` (historial)* | propio | propio | ✗ | ✓ | ✗ |
-| *`GET /viajes/activos`* | ✗ | ✗ | ✓ | ✓ | ✗ |
+| `GET /viajes` (historial) | propio | propio | ✗ | ✗ | ✗ |
+| `GET /viajes/activos` | ✗ | ✗ | ✓ | ✓ (solo lectura) | ✗ |
 | *`GET /integracion/zonas/{zonaId}/viajes-finalizados`* | ✗ | ✗ | ✗ | ✗ | ✓ |
 | *`GET /reportes/zonas/{zonaId}`* | ✗ | ✗ | ✗ | ✓ | ✗ |
 
@@ -1437,7 +1521,7 @@ Notas sobre la tabla:
 
 Los permisos se controlan en **dos niveles**, como fija ADR-0003:
 
-1. **Por rol, en la capa HTTP.** El middleware `crearAutorizacionPorRol(...)` se monta en la ruta, después de la autenticación, y rechaza con **`403 NO_AUTORIZADO`** y el mensaje genérico `"No tenés permiso para realizar esta operación."` a quien no tiene un rol permitido. No consulta la base: el rol viaja firmado en el JWT. Responde antes de validar el cuerpo y antes de buscar el recurso. Ejemplo: un operador de soporte que llama a `POST /viajes/{id}/cancelar` (D8), o un pasajero que llama a `POST /viajes/{id}/iniciar`.
+1. **Por rol, en la capa HTTP.** El middleware `crearAutorizacionPorRol(...)` se monta en la ruta, después de la autenticación, y rechaza con **`403 NO_AUTORIZADO`** y el mensaje genérico `"No tenés permiso para realizar esta operación."` a quien no tiene un rol permitido. No consulta la base: el rol viaja firmado en el JWT. Responde antes de validar el cuerpo y antes de buscar el recurso. Ejemplo: un administrador que llama a `POST /viajes/{id}/cancelar`, o un pasajero que llama a `POST /viajes/{id}/iniciar`.
 2. **Por recurso, en el caso de uso** (`src/application/use-cases/`). El caso de uso recibe al solicitante (`usuarioId` y `rol`) y comprueba que el recurso le pertenezca o que su rol pueda verlo. También responde **`403 NO_AUTORIZADO`**, pero con un mensaje específico (por ejemplo, `"No tenés permiso para cancelar este viaje."`). Ejemplo: otro pasajero que intenta cancelar un viaje ajeno.
 
 La regla por recurso vive en la aplicación y no en Express para que valga igual desde HTTP, desde el canal de tiempo real o desde un test. Las rutas sin control por rol (`/usuarios/{id}`, `GET /viajes/{id}`) delegan **todo** el permiso al caso de uso. Cada endpoint nuevo declara sus roles en la ruta y, si toca un recurso con dueño, verifica la propiedad en su caso de uso.
@@ -1499,7 +1583,7 @@ Cada fila es algo que el código hace distinto de `docs/modelo.md` o de los ADR,
 | D3 | ~~La elegibilidad no mira la ubicación.~~ **Resuelta.** | Chofer elegible = habilitado, disponible, libre **y con ubicación vigente reciente** (§2, I5). | Listar y aceptar viajes exigen una ubicación de menos de `UBICACION_VIGENCIA_MS` (60 s por defecto). | Resuelta en E2 · RF-02 + RF-03 |
 | D4 | ~~Habilitar no exige vehículo.~~ **Resuelta.** | Habilitar exige un vehículo registrado (§6.4, Q11, propuesta). | Habilitar sin vehículo responde `409 CHOFER_SIN_VEHICULO`; el vehículo no se puede borrar. | Resuelta en E2 · RF-02 + RF-03 |
 | D5 | ~~Faltan estados del viaje.~~ **Resuelta.** | Nueve estados con transición `ASIGNADO → CHOFER_EN_CAMINO → EN_CURSO → FINALIZADO`, `iniciadoEn` y cancelación por chofer (§6.1). | El dominio, la migración 013, el repositorio y las rutas `/en-camino` e `/iniciar` implementan la máquina. Excepción cerrada: `asignar()` sobre terminal devuelve `VIAJE_NO_DISPONIBLE` (ADR-0004), no `TRANSICION_INVALIDA`. | Resuelta en E3; queda la integración con ofertas (D2) |
-| D6 | ~~El pasajero no puede cancelar con el chofer en camino.~~ **Resuelta.** | El pasajero cancela en `SOLICITADO`, `ASIGNADO` y `CHOFER_EN_CAMINO` (§6.1). | Una sola ruta actor-aware: pasajero dueño o chofer asignado; el estado final lo decide el vínculo con el recurso, no el rol. Sin soporte (D8). | Resuelta en E3 |
+| D6 | ~~El pasajero no puede cancelar con el chofer en camino.~~ **Resuelta.** | El pasajero cancela en `SOLICITADO`, `ASIGNADO` y `CHOFER_EN_CAMINO` (§6.1). | Una sola ruta actor-aware: pasajero dueño o chofer asignado; el estado final lo decide el vínculo con el recurso, no el rol. Soporte se sumó en E5 (`CANCELADO_POR_SOPORTE`, también desde `EN_CURSO`). | Resuelta en E3 y E5 |
 | D7 | Atributos del viaje. | `iniciadoEn`, `distanciaRealM`, `tiempoRealS`, `tarifaFinal` (§4.10). | **`iniciadoEn` implementado** (migración 013, repositorio y vista pública). `distanciaRealM`, `tiempoRealS` y `tarifaFinalCentavos` siguen pendientes: `finalizar` fija `cerradoEn` y cobra `precioFijadoCentavos`. | Parcial; lo restante es E4 · tarifa y cobro |
 | D8 | Nombre del precio. | `precioFijado` (§4.10). | `precioFijadoCentavos`. Se propone adoptar el sufijo `Centavos` en todos los montos de la API (§1) y alinear el modelo. | E2 · cotizar y confirmar |
 | D9 | ~~Tarifa provisional distinta de la del modelo.~~ **Resuelta para el flujo nuevo.** | `Tarifa` versionada con `base`, `porKm`, `porMinuto` y `precioMaximo`; sin mínimo (§4.7, §7.2). | La cotización usa la tarifa publicada en la base, con componente por minuto y sin mínimo. `POST /viajes` sigue usando las variables `TARIFA_*` y el mínimo histórico hasta que se retire. | Resuelta en E2 · RF-23 + RF-16 |
