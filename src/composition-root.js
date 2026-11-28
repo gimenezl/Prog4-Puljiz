@@ -76,6 +76,8 @@ import { crearCrearViaje } from './application/use-cases/viajes/crear-viaje.js';
 import { crearFinalizarViaje } from './application/use-cases/viajes/finalizar-viaje.js';
 import { crearIniciarViaje } from './application/use-cases/viajes/iniciar-viaje.js';
 import { crearMarcarEnCamino } from './application/use-cases/viajes/marcar-en-camino.js';
+import { crearListarHistorial } from './application/use-cases/viajes/listar-historial.js';
+import { crearListarViajesActivos } from './application/use-cases/viajes/listar-viajes-activos.js';
 import { crearListarViajesDisponibles } from './application/use-cases/viajes/listar-viajes-disponibles.js';
 import { crearObtenerCobro } from './application/use-cases/viajes/obtener-cobro.js';
 import { crearObtenerViaje } from './application/use-cases/viajes/obtener-viaje.js';
@@ -260,6 +262,8 @@ export function composeApplication(entorno) {
   });
   const obtenerViaje = crearObtenerViaje({ repositorioViajes });
   const obtenerCobro = crearObtenerCobro({ repositorioViajes, repositorioCobros });
+  const listarHistorial = crearListarHistorial({ repositorioViajes });
+  const listarViajesActivos = crearListarViajesActivos({ repositorioViajes });
   const listarViajesDisponibles = crearListarViajesDisponibles({
     repositorioViajes,
     repositorioChoferes,
@@ -399,6 +403,8 @@ export function composeApplication(entorno) {
       obtenerViaje,
       obtenerCobro,
       listarViajesDisponibles,
+      listarHistorial,
+      listarViajesActivos,
     },
     choferes: {
       obtenerPerfilChofer,
