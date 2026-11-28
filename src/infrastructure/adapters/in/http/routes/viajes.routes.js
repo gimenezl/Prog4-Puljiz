@@ -26,7 +26,11 @@ export function createViajesRouter({
   const router = Router();
   const soloPasajero = crearAutorizacionPorRol(ROLES.PASAJERO);
   const soloChofer = crearAutorizacionPorRol(ROLES.CHOFER);
-  const pasajeroOChofer = crearAutorizacionPorRol(ROLES.PASAJERO, ROLES.CHOFER);
+  const puedeCancelar = crearAutorizacionPorRol(
+    ROLES.PASAJERO,
+    ROLES.CHOFER,
+    ROLES.OPERADOR_SOPORTE,
+  );
 
   router.use(autenticacionRequerida);
 
@@ -159,7 +163,7 @@ export function createViajesRouter({
   router.post(
     '/:id/cancelar',
     limitadorViajes,
-    pasajeroOChofer,
+    puedeCancelar,
     asyncHandler(async (req, res) => {
       const viajeId = validarIdentificador(req.params.id);
       const { motivo } = validarCuerpo(esquemaCancelarViaje, req.body);

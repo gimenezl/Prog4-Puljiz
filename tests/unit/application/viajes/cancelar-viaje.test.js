@@ -368,3 +368,56 @@ test('finalizar gana siempre la carrera contra la cancelación del chofer en cur
   assert.equal(choferGuardado.viajeActivoId, null);
   assert.equal(choferGuardado.estado, 'DISPONIBLE');
 });
+
+const SOPORTE = Object.freeze({
+  usuarioId: '00000000-0000-4000-8000-000000000098',
+  rol: 'OPERADOR_SOPORTE',
+});
+
+test('soporte cancela un viaje en curso, libera al chofer y queda como autor', async () => {
+  const kit = crearKitViajes();
+  const { viaje } = await kit.crearViajeEnCurso();
+  assert.equal(viaje.estado, 'EN_CURSO');
+
+  const cancelado = await kit.cancelarViaje({
+    viajeId: viaje.id,
+    actor: SOPORTE,
+    motivo: 'Emergencia reportada por el pasajero',
+  });
+
+  assert.equal(cancelado.estado, 'CANCELADO_POR_SOPORTE');
+  assert.equal(cancelado.canceladoPorId, SOPORTE.usuarioId);
+  assert.equal(cancelado.choferId, viaje.choferId);
+
+  const chofer = await kit.repositorioChoferes.buscarPorUsuarioId(viaje.choferId);
+  assert.equal(chofer.viajeActivoId, null);
+});
+
+test('soporte cancela un viaje solicitado sin chofer', async () => {
+  const kit = crearKitViajes();
+  const { viaje } = await kit.crearViajeDePrueba();
+
+  const cancelado = await kit.cancelarViaje({
+    viajeId: viaje.id,
+    actor: SOPORTE,
+    motivo: 'Pedido duplicado',
+  });
+
+  assert.equal(cancelado.estado, 'CANCELADO_POR_SOPORTE');
+  assert.equal(cancelado.choferId, null);
+});
+
+test('un administrador no puede cancelar aunque vea todos los viajes', async () => {
+  const kit = crearKitViajes();
+  const { viaje } = await kit.crearViajeDePrueba();
+
+  await assert.rejects(
+    () =>
+      kit.cancelarViaje({
+        viajeId: viaje.id,
+        actor: { usuarioId: '00000000-0000-4000-8000-000000000099', rol: 'ADMINISTRADOR' },
+        motivo: 'No corresponde',
+      }),
+    (error) => error.codigo === 'NO_AUTORIZADO',
+  );
+});

@@ -210,7 +210,9 @@ export const casosViajesA = [
       afirmarEstado(finalizarAjeno, 403, 'chofer ajeno intenta finalizar');
       afirmarCodigo(finalizarAjeno, 'NO_AUTORIZADO', 'finalización por chofer ajeno');
 
-      const matrizCancelar = ['chofer2', 'pasajero2', 'admin', 'soporte'];
+      // Soporte sí puede cancelar (RF-15); no se prueba acá para no cerrar el
+      // viaje que usan los pasos siguientes. Lo cubren los tests de HTTP.
+      const matrizCancelar = ['chofer2', 'pasajero2', 'admin'];
 
       for (const clave of matrizCancelar) {
         const respuesta = await contexto.solicitar(`/viajes/${id}/cancelar`, {
@@ -222,7 +224,10 @@ export const casosViajesA = [
         afirmarCodigo(respuesta, 'NO_AUTORIZADO', `cancelar como ${clave}`);
       }
 
-      evidencia(contexto, 'Cancelar: solo pasajero dueño o chofer asignado; resto 403');
+      evidencia(
+        contexto,
+        'Cancelar: pasajero dueño, chofer asignado o soporte; chofer ajeno, pasajero ajeno y admin 403',
+      );
 
       for (const [clave, esperado] of [
         ['pasajero', 200],
