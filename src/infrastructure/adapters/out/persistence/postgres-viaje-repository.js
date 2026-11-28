@@ -137,6 +137,42 @@ export class PostgresViajeRepository {
     return rows.map((fila) => ({ viaje: mapearViaje(fila), distanciaM: fila.distancia_m }));
   }
 
+  /**
+   * Historial de un usuario (RF-14): los viajes donde es pasajero o chofer.
+   * Paginación por cursor: `(solicitado_en, id) < (antesDe)` compara las dos
+   * columnas como una tupla, y los índices viajes_*_historial_idx permiten
+   * saltar directo a ese punto sin leer las páginas anteriores.
+   */
+  async listarPorParticipante(usuarioId, { estados = null, antesDe = null, limite }, ejecutor) {
+    const { rows } = await this.#ejecutor(ejecutor).query(
+      `SELECT ${CAMPOS}
+         FROM viajes
+        WHERE (pasajero_id = $1 OR chofer_id = $1)
+          AND ($2::varchar[] IS NULL OR estado = ANY($2::varchar[]))
+          AND ($3::timestamptz IS NULL OR (solicitado_en, id) < ($3, $4::uuid))
+        ORDER BY solicitado_en DESC, id DESC
+        LIMIT $5`,
+      [usuarioId, estados, antesDe?.solicitadoEn ?? null, antesDe?.id ?? null, limite],
+    );
+
+    return rows.map(mapearViaje);
+  }
+
+  /** Viajes activos de todo el sistema, para soporte (RF-15). */
+  async listarActivos({ antesDe = null, limite }, ejecutor) {
+    const { rows } = await this.#ejecutor(ejecutor).query(
+      `SELECT ${CAMPOS}
+         FROM viajes
+        WHERE estado = ANY($1::varchar[])
+          AND ($2::timestamptz IS NULL OR (solicitado_en, id) < ($2, $3::uuid))
+        ORDER BY solicitado_en DESC, id DESC
+        LIMIT $4`,
+      [[...ESTADOS_DEMANDA_ACTIVA], antesDe?.solicitadoEn ?? null, antesDe?.id ?? null, limite],
+    );
+
+    return rows.map(mapearViaje);
+  }
+
   async listarActivosDesde(desde, ejecutor) {
     const { rows } = await this.#ejecutor(ejecutor).query(
       `SELECT ${CAMPOS}

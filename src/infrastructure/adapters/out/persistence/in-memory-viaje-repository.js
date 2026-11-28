@@ -4,6 +4,27 @@ import { PuntoGeografico } from '../../../../domain/value-objects/punto-geografi
 
 const ESTADOS_ACTIVOS = new Set(ESTADOS_DEMANDA_ACTIVA);
 
+// Orden del historial: más nuevo primero; a igual fecha, id descendente.
+function compararDescendente(a, b) {
+  return (
+    b.solicitadoEn.getTime() - a.solicitadoEn.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+  );
+}
+
+// Igual que `(solicitado_en, id) < (antesDe)` en SQL: compara como tupla.
+function esAnterior(viaje, antesDe) {
+  const tiempo = viaje.solicitadoEn.getTime();
+  const tiempoCursor = antesDe.solicitadoEn.getTime();
+  return tiempo < tiempoCursor || (tiempo === tiempoCursor && viaje.id < antesDe.id);
+}
+
+function paginar(viajes, antesDe, limite) {
+  return viajes
+    .filter((viaje) => antesDe === null || esAnterior(viaje, antesDe))
+    .sort(compararDescendente)
+    .slice(0, limite);
+}
+
 /**
  * Adaptador falso del puerto RepositorioViajes. Las entidades son inmutables,
  * por lo que el mapa se puede copiar sin clonar cada viaje.
@@ -46,6 +67,25 @@ export class InMemoryViajeRepository {
   }
 
   /** Igual que el adaptador real, pero midiendo la distancia con Haversine. */
+  async listarPorParticipante(usuarioId, { estados = null, antesDe = null, limite }, _ejecutor) {
+    return paginar(
+      [...this.#porId.values()].filter(
+        (viaje) =>
+          viaje.esParticipante(usuarioId) && (estados === null || estados.includes(viaje.estado)),
+      ),
+      antesDe,
+      limite,
+    );
+  }
+
+  async listarActivos({ antesDe = null, limite }, _ejecutor) {
+    return paginar(
+      [...this.#porId.values()].filter((viaje) => ESTADOS_ACTIVOS.has(viaje.estado)),
+      antesDe,
+      limite,
+    );
+  }
+
   async listarSolicitadosCerca(punto, radioM, limite = 50, _ejecutor) {
     const centro = new PuntoGeografico(punto);
 
