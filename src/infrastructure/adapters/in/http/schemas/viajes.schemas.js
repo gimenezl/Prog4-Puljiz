@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ESTADOS_VIAJE } from '../../../../../domain/entities/viaje.js';
+
 const coordenada = z
   .object({
     lat: z.number().min(-90, 'La latitud debe estar entre -90 y 90.'),
@@ -35,3 +37,24 @@ export const esquemaHabilitacionChofer = z
     habilitado: z.boolean({ message: 'La habilitación debe ser booleana.' }),
   })
   .strict();
+
+const limitePagina = z.coerce
+  .number({ message: 'El límite debe ser un número.' })
+  .int('El límite debe ser entero.')
+  .min(1, 'El límite debe ser al menos 1.')
+  .max(100, 'El límite no puede superar 100.')
+  .default(20);
+
+const cursor = z.string().max(200, 'El cursor no es válido.').optional();
+
+/** Parámetros de GET /viajes (historial propio, RF-14). */
+export const esquemaHistorial = z
+  .object({
+    limite: limitePagina,
+    cursor,
+    estado: z.enum(Object.values(ESTADOS_VIAJE), { message: 'El estado no es válido.' }).optional(),
+  })
+  .strict();
+
+/** Parámetros de GET /viajes/activos (soporte, RF-15). */
+export const esquemaViajesActivos = z.object({ limite: limitePagina, cursor }).strict();

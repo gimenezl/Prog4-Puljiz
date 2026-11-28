@@ -205,7 +205,9 @@ Endpoints:
 | `POST` | `/viajes/:id/iniciar` | Chofer asignado; `CHOFER_EN_CAMINO → EN_CURSO` (fija `iniciadoEn`) |
 | `POST` | `/viajes/:id/finalizar` | Chofer asignado; solo desde `EN_CURSO`, con `Idempotency-Key` |
 | `GET` | `/viajes/:id/cobro` | Participantes, `ADMINISTRADOR` u `OPERADOR_SOPORTE` |
-| `POST` | `/viajes/:id/cancelar` | Pasajero dueño (`SOLICITADO`/`ASIGNADO`/`CHOFER_EN_CAMINO`) o chofer asignado (`ASIGNADO`/`CHOFER_EN_CAMINO`), con `{ "motivo" }` |
+| `POST` | `/viajes/:id/cancelar` | Pasajero dueño (`SOLICITADO`/`ASIGNADO`/`CHOFER_EN_CAMINO`), chofer asignado (`ASIGNADO`/`CHOFER_EN_CAMINO`) u operador de soporte (también `EN_CURSO`), con `{ "motivo" }` |
+| `GET` | `/viajes` | Historial propio de `PASAJERO` o `CHOFER`, paginado por cursor (`?limite`, `?cursor`, `?estado`) |
+| `GET` | `/viajes/activos` | `OPERADOR_SOPORTE` o `ADMINISTRADOR`: viajes activos de todo el sistema, paginados por cursor |
 | `GET` | `/choferes/yo` | `CHOFER` |
 | `PATCH` | `/choferes/yo` | `CHOFER`; únicamente `disponible` |
 | `GET` | `/choferes/yo/vehiculo` | `CHOFER` |

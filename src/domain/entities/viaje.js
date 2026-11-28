@@ -417,6 +417,34 @@ export class Viaje {
     });
   }
 
+  /**
+   * Cancela el viaje por decisión del operador de soporte (RF-15).
+   *
+   * Es el único actor que puede cortar un viaje EN_CURSO: así ningún viaje
+   * queda trabado en un estado del que nadie puede sacarlo. El chofer, si lo
+   * había, queda como historial. Cancelar nunca genera cobro.
+   */
+  cancelarPorSoporte(ahora, motivo, soporteId) {
+    if (
+      this.#estado !== ESTADOS_VIAJE.SOLICITADO &&
+      this.#estado !== ESTADOS_VIAJE.ASIGNADO &&
+      this.#estado !== ESTADOS_VIAJE.CHOFER_EN_CAMINO &&
+      this.#estado !== ESTADOS_VIAJE.EN_CURSO
+    ) {
+      throw new ErrorDeDominio(
+        'TRANSICION_INVALIDA',
+        'El viaje ya no puede cancelarse en su estado actual.',
+      );
+    }
+
+    return this.#copia({
+      estado: ESTADOS_VIAJE.CANCELADO_POR_SOPORTE,
+      cerradoEn: validarFecha(ahora, 'La fecha de cierre no es válida.'),
+      canceladoPorId: validarIdentificador(soporteId, 'El operador de soporte no es válido.'),
+      motivoCancelacion: validarMotivo(motivo),
+    });
+  }
+
   aVistaPublica() {
     return {
       id: this.#id,

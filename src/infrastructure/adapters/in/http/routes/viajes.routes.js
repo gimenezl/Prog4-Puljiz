@@ -3,7 +3,12 @@ import { Router } from 'express';
 import { ROLES } from '../../../../../domain/entities/usuario.js';
 import { asyncHandler } from '../async-handler.js';
 import { crearAutorizacionPorRol } from '../middlewares/authorization.js';
-import { esquemaCancelarViaje, esquemaCrearViaje } from '../schemas/viajes.schemas.js';
+import {
+  esquemaCancelarViaje,
+  esquemaCrearViaje,
+  esquemaHistorial,
+  esquemaViajesActivos,
+} from '../schemas/viajes.schemas.js';
 import { validarCuerpo, validarIdentificador } from '../validation.js';
 
 /**
@@ -20,13 +25,19 @@ export function createViajesRouter({
   obtenerViaje,
   obtenerCobro,
   listarViajesDisponibles,
+  listarHistorial,
+  listarViajesActivos,
   autenticacionRequerida,
   limitadorViajes,
 }) {
   const router = Router();
   const soloPasajero = crearAutorizacionPorRol(ROLES.PASAJERO);
   const soloChofer = crearAutorizacionPorRol(ROLES.CHOFER);
-  const pasajeroOChofer = crearAutorizacionPorRol(ROLES.PASAJERO, ROLES.CHOFER);
+  const puedeCancelar = crearAutorizacionPorRol(
+    ROLES.PASAJERO,
+    ROLES.CHOFER,
+    ROLES.OPERADOR_SOPORTE,
+  );
 
   router.use(autenticacionRequerida);
 
@@ -48,6 +59,37 @@ export function createViajesRouter({
       }
 
       res.status(reutilizada ? 200 : 201).json({ viaje });
+    }),
+  );
+
+  // RF-14: historial propio. Solo pasajeros y choferes (lo valida el caso de uso).
+  router.get(
+    '/',
+    asyncHandler(async (req, res) => {
+      const { limite, cursor, estado } = validarCuerpo(esquemaHistorial, req.query);
+      const { viajes, siguienteCursor } = await listarHistorial({
+        solicitante: req.autenticacion,
+        estado,
+        cursor,
+        limite,
+      });
+
+      res.json({ viajes: viajes.map((viaje) => viaje.aVistaPublica()), siguienteCursor });
+    }),
+  );
+
+  // RF-15: viajes activos para soporte y administración. Va antes de '/:id'.
+  router.get(
+    '/activos',
+    asyncHandler(async (req, res) => {
+      const { limite, cursor } = validarCuerpo(esquemaViajesActivos, req.query);
+      const { viajes, siguienteCursor } = await listarViajesActivos({
+        solicitante: req.autenticacion,
+        cursor,
+        limite,
+      });
+
+      res.json({ viajes: viajes.map((viaje) => viaje.aVistaPublica()), siguienteCursor });
     }),
   );
 
@@ -159,7 +201,7 @@ export function createViajesRouter({
   router.post(
     '/:id/cancelar',
     limitadorViajes,
-    pasajeroOChofer,
+    puedeCancelar,
     asyncHandler(async (req, res) => {
       const viajeId = validarIdentificador(req.params.id);
       const { motivo } = validarCuerpo(esquemaCancelarViaje, req.body);

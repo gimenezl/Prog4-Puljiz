@@ -408,3 +408,52 @@ test('el constructor admite CHOFER_EN_CAMINO con chofer y sin fecha de inicio', 
   assert.equal(iniciado.estado, ESTADOS_VIAJE.EN_CURSO);
   assert.equal(iniciado.iniciadoEn.toISOString(), '2026-01-01T00:06:00.000Z');
 });
+
+test('soporte puede cancelar en cualquier estado activo, incluido EN_CURSO', () => {
+  const soporteId = '00000000-0000-4000-8000-000000000009';
+
+  for (const estado of [
+    ESTADOS_VIAJE.SOLICITADO,
+    ESTADOS_VIAJE.ASIGNADO,
+    ESTADOS_VIAJE.CHOFER_EN_CAMINO,
+    ESTADOS_VIAJE.EN_CURSO,
+  ]) {
+    const original = crearViajeEnEstado(estado);
+    const cancelado = original.cancelarPorSoporte(
+      FECHA_CIERRE,
+      '  Reclamo del pasajero  ',
+      soporteId,
+    );
+
+    assert.equal(cancelado.estado, ESTADOS_VIAJE.CANCELADO_POR_SOPORTE, estado);
+    assert.equal(cancelado.canceladoPorId, soporteId);
+    assert.equal(cancelado.motivoCancelacion, 'Reclamo del pasajero');
+    assert.equal(cancelado.cerradoEn.toISOString(), FECHA_CIERRE.toISOString());
+    // El chofer queda como historial y el original no cambia.
+    assert.equal(cancelado.choferId, original.choferId);
+    assert.equal(original.estado, estado);
+  }
+});
+
+test('soporte no puede cancelar un viaje terminado ni sin motivo', () => {
+  const soporteId = '00000000-0000-4000-8000-000000000009';
+
+  for (const estado of [
+    ESTADOS_VIAJE.FINALIZADO,
+    ESTADOS_VIAJE.CANCELADO_POR_PASAJERO,
+    ESTADOS_VIAJE.CANCELADO_POR_CHOFER,
+    ESTADOS_VIAJE.CANCELADO_POR_SOPORTE,
+    ESTADOS_VIAJE.SIN_CHOFERES_DISPONIBLES,
+  ]) {
+    assert.throws(
+      () => crearViajeEnEstado(estado).cancelarPorSoporte(FECHA_CIERRE, 'X', soporteId),
+      (error) => error.codigo === 'TRANSICION_INVALIDA',
+      estado,
+    );
+  }
+
+  assert.throws(
+    () => crearViaje().cancelarPorSoporte(FECHA_CIERRE, '   ', soporteId),
+    (error) => error.codigo === 'DATOS_INVALIDOS',
+  );
+});

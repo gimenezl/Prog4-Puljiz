@@ -252,11 +252,12 @@ test('autorización por recurso de un viaje con cuatro roles', async (t) => {
   afirmarEstado(otroChoferAcepta, 409, 'aceptar como chofer ajeno');
   assert.equal(otroChoferAcepta.cuerpo.error.codigo, 'VIAJE_NO_DISPONIBLE');
 
+  // Soporte sí puede cancelar (RF-15): se prueba aparte, en
+  // «soporte cancela por HTTP un viaje en curso».
   const cancelacionesProhibidas = [
     ['pasajero ajeno', otroPasajero],
     ['chofer ajeno', otroChofer],
     ['administrador', admin],
-    ['operador de soporte', soporte],
   ];
 
   for (const [descripcion, sesion] of cancelacionesProhibidas) {
@@ -486,4 +487,34 @@ test('el chofer asignado cancela desde CHOFER_EN_CAMINO por HTTP y queda libre',
   afirmarEstado(perfil, 200, 'perfil del chofer tras cancelar');
   assert.equal(perfil.cuerpo.chofer.viajeActivoId, null);
   assert.equal(perfil.cuerpo.chofer.estado, 'DISPONIBLE');
+});
+
+test('soporte cancela por HTTP un viaje en curso; el administrador no puede', async (t) => {
+  const { urlBase, admin, soporte, pasajero, chofer } = await prepararEscenario(t);
+  const viaje = await crearViajeAsignado(urlBase, pasajero, chofer, 'autorizacion-soporte');
+  const urlViaje = `${urlBase}/viajes/${viaje.id}`;
+
+  for (const paso of ['en-camino', 'iniciar']) {
+    const avance = await llamar(`${urlViaje}/${paso}`, { method: 'POST', token: chofer.token });
+    afirmarEstado(avance, 200, `chofer ${paso}`);
+  }
+
+  const comoAdmin = await llamar(`${urlViaje}/cancelar`, {
+    method: 'POST',
+    token: admin.token,
+    body: { motivo: 'Intento sin permiso' },
+  });
+  afirmarEstado(comoAdmin, 403, 'cancelar como administrador');
+
+  const comoSoporte = await llamar(`${urlViaje}/cancelar`, {
+    method: 'POST',
+    token: soporte.token,
+    body: { motivo: 'Emergencia reportada por el pasajero' },
+  });
+  afirmarEstado(comoSoporte, 200, 'cancelar como soporte');
+  assert.equal(comoSoporte.cuerpo.viaje.estado, 'CANCELADO_POR_SOPORTE');
+  assert.equal(comoSoporte.cuerpo.viaje.canceladoPorId, soporte.usuario.id);
+
+  const perfil = await llamar(`${urlBase}/choferes/yo`, { token: chofer.token });
+  assert.equal(perfil.cuerpo.chofer.viajeActivoId, null);
 });

@@ -1,9 +1,12 @@
+import { ROLES } from '../../../domain/entities/usuario.js';
 import { ErrorDeDominio } from '../../../domain/errors/error-de-dominio.js';
 
 /**
- * Caso de uso: cancelar un viaje propio.
+ * Caso de uso: cancelar un viaje.
  *
- * El actor puede ser el pasajero dueño o el chofer asignado. El estado final y
+ * El actor puede ser el pasajero dueño, el chofer asignado o un operador de
+ * soporte (RF-15), que puede cancelar cualquier viaje activo, incluso EN_CURSO,
+ * sin ser participante. El estado final y
  * los estados de origen válidos los decide el dominio según el vínculo con el
  * viaje, no el rol del token. Si el viaje ya tenía chofer, se libera en la
  * misma operación atómica; la fila del viaje se bloquea antes que la del
@@ -25,7 +28,9 @@ export function crearCancelarViaje({
 
       let cancelado;
 
-      if (viaje.pasajeroId === actor.usuarioId) {
+      if (actor.rol === ROLES.OPERADOR_SOPORTE) {
+        cancelado = viaje.cancelarPorSoporte(reloj.ahora(), motivo, actor.usuarioId);
+      } else if (viaje.pasajeroId === actor.usuarioId) {
         cancelado = viaje.cancelarPorPasajero(reloj.ahora(), motivo);
       } else if (viaje.choferId !== null && viaje.choferId === actor.usuarioId) {
         cancelado = viaje.cancelarPorChofer(reloj.ahora(), motivo);
